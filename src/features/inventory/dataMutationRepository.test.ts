@@ -1,12 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { applyAppDataSnapshot, collectAppDataSnapshot, type AppDataSnapshot } from "./appDataSnapshot";
-import { commitDataMutation } from "./dataMutationRepository";
+import {
+  completeBatchConsumableTimelineItem,
+  commitTimelineItemInventoryUpdate,
+  commitTimelineItemUpdates,
+  commitDataMutation,
+  deleteMistakenTimelineItem,
+  reopenDiscardedTimelineItems
+} from "./dataMutationRepository";
 import {
   setPersistenceCommandAdapterForTests,
   type PersistenceCommandAdapter
 } from "./persistenceGateway";
 import { useTimelineItemStore } from "../../stores/timelineItemStore";
 import { useInventoryStore } from "../../stores/inventoryStore";
+import { useUsageFactStore } from "../../stores/usageFactStore";
+import { useTimelineCareEventStore } from "../../stores/timelineCareEventStore";
 
 function fixture(): AppDataSnapshot {
   return {
@@ -123,5 +132,417 @@ describe("combined SQLite mutations", () => {
     });
     expect(useInventoryStore.getState().transactions.map((entry) => entry.id)).toContain("activate");
     expect(useInventoryStore.getState().transactions.map((entry) => entry.id)).toContain("reverse-activate");
+  });
+
+  it("deletes a mistaken instance incrementally after SQLite acknowledges the mutation", async () => {
+    const source = fixture();
+    source.transactions.push({
+      id: "consume",
+      stockLotId: "lot",
+      occurredDate: "2026-08-26",
+      type: "consume",
+      quantityDelta: -1,
+      locationId: "home",
+      relatedInstanceId: "item"
+    });
+    source.usageFacts.push({
+      id: "fact",
+      itemId: "item",
+      stockLotId: "lot",
+      transactionId: "consume",
+      date: "2026-08-26",
+      kind: "wear",
+      quantity: 1
+    });
+    source.careEvents.push({
+      id: "care",
+      itemId: "item",
+      kind: "review",
+      plannedDate: "2026-08-27"
+    });
+    applyAppDataSnapshot(source);
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const adapter = vi.fn();
+    setPersistenceCommandAdapterForTests(async <T>(
+      command: string,
+      args?: Record<string, unknown>
+    ) => {
+      adapter(command, args);
+      await gate;
+      return undefined as T;
+    });
+    const clone = vi.spyOn(globalThis, "structuredClone");
+
+    const pending = deleteMistakenTimelineItem("item", "2026-08-28");
+    expect(useTimelineItemStore.getState().items).toHaveLength(1);
+    expect(useUsageFactStore.getState().facts).toHaveLength(1);
+    expect(useTimelineCareEventStore.getState().events).toHaveLength(1);
+    expect(clone).not.toHaveBeenCalled();
+
+    release();
+    await pending;
+
+    expect(useTimelineItemStore.getState().items).toHaveLength(0);
+    expect(useUsageFactStore.getState().facts).toHaveLength(0);
+    expect(useTimelineCareEventStore.getState().events).toHaveLength(0);
+    const transactions = useInventoryStore.getState().transactions;
+    expect(transactions.filter((entry) => entry.type === "reverse")).toEqual([
+      expect.objectContaining({
+        stockLotId: "lot",
+        quantityDelta: 1,
+        reversedTransactionId: "activate",
+        locationId: "home"
+      }),
+      expect.objectContaining({
+        stockLotId: "lot",
+        quantityDelta: 1,
+        reversedTransactionId: "consume",
+        locationId: "home"
+      })
+    ]);
+    expect(adapter).toHaveBeenCalledWith("commit_app_data_mutation", {
+      mutation: expect.objectContaining({
+        deleteItemIds: ["item"],
+        deleteUsageFactIds: ["fact"],
+        deleteCareEventIds: ["care"],
+        appendTransactions: expect.arrayContaining([
+          expect.objectContaining({ reversedTransactionId: "activate" }),
+          expect.objectContaining({ reversedTransactionId: "consume" })
+        ])
+      })
+    });
+  });
+
+  it("keeps all stores unchanged when incremental mistaken-item deletion fails", async () => {
+    setPersistenceCommandAdapterForTests(async () => {
+      throw new Error("database locked");
+    });
+    const before = collectAppDataSnapshot();
+
+    await expect(
+      deleteMistakenTimelineItem("item", "2026-08-28")
+    ).rejects.toThrow("database locked");
+
+    expect(collectAppDataSnapshot()).toEqual(before);
+  });
+
+  it("publishes lifecycle changes incrementally only after SQLite acknowledges them", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    setPersistenceCommandAdapterForTests(async <T>() => {
+      await gate;
+      return undefined as T;
+    });
+    const clone = vi.spyOn(globalThis, "structuredClone");
+
+    const pending = commitTimelineItemUpdates((items) =>
+      items.map((item) =>
+        item.id === "item"
+          ? {
+              ...item,
+              status: "paused" as const,
+              stateIntervals: [
+                {
+                  startDate: item.startDate,
+                  endDate: "2026-08-26",
+                  status: "active" as const
+                },
+                {
+                  startDate: "2026-08-26",
+                  endDate: null,
+                  status: "paused" as const
+                }
+              ]
+            }
+          : item
+      )
+    );
+    expect(useTimelineItemStore.getState().items[0]?.status).toBe("active");
+    expect(clone).not.toHaveBeenCalled();
+
+    release();
+    await pending;
+    expect(useTimelineItemStore.getState().items[0]?.status).toBe("paused");
+    expect(clone).not.toHaveBeenCalled();
+  });
+
+  it("publishes a location and inventory transfer together after SQLite acknowledges", async () => {
+    useInventoryStore.setState((state) => ({
+      locations: [
+        ...state.locations,
+        { id: "office", name: "办公室", active: true, order: 1 }
+      ]
+    }));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    setPersistenceCommandAdapterForTests(async <T>() => {
+      await gate;
+      return undefined as T;
+    });
+    const source = useTimelineItemStore.getState().items[0]!;
+    const moved = {
+      ...source,
+      locationId: "office",
+      location: "办公室",
+      locationIntervals: [
+        { locationId: "home", startDate: "2026-08-25" as const, endDate: "2026-08-26" as const },
+        { locationId: "office", startDate: "2026-08-26" as const, endDate: null }
+      ]
+    };
+    const transfer = {
+      id: "transfer-all",
+      stockLotId: "lot",
+      occurredDate: "2026-08-26" as const,
+      type: "transfer" as const,
+      quantityDelta: 0,
+      fromLocationId: "home",
+      toLocationId: "office",
+      transferQuantity: 1
+    };
+    const clone = vi.spyOn(globalThis, "structuredClone");
+
+    const pending = commitTimelineItemInventoryUpdate(moved, [transfer]);
+    expect(useTimelineItemStore.getState().items[0]?.locationId).toBe("home");
+    expect(useInventoryStore.getState().transactions).toHaveLength(3);
+    expect(clone).not.toHaveBeenCalled();
+
+    release();
+    await pending;
+    expect(useTimelineItemStore.getState().items[0]?.locationId).toBe("office");
+    expect(useInventoryStore.getState().transactions.at(-1)).toEqual(transfer);
+    expect(clone).not.toHaveBeenCalled();
+  });
+
+  it("rejects an incremental transfer to an inactive location before SQLite", async () => {
+    useInventoryStore.setState((state) => ({
+      locations: [
+        ...state.locations,
+        { id: "office", name: "办公室", active: false, order: 1 }
+      ]
+    }));
+    const adapter = vi.fn();
+    setPersistenceCommandAdapterForTests(adapter);
+    await expect(commitTimelineItemInventoryUpdate(
+      useTimelineItemStore.getState().items[0]!,
+      [{
+        id: "invalid-transfer",
+        stockLotId: "lot",
+        occurredDate: "2026-08-26",
+        type: "transfer",
+        quantityDelta: 0,
+        fromLocationId: "home",
+        toLocationId: "office",
+        transferQuantity: 1
+      }]
+    )).rejects.toThrow("不可用");
+    expect(adapter).not.toHaveBeenCalled();
+    expect(useInventoryStore.getState().transactions).toHaveLength(3);
+  });
+
+  it("ends a batch consumable with a user-confirmed loss after SQLite acknowledges", async () => {
+    const source = fixture();
+    source.profiles[0] = {
+      ...source.profiles[0]!, groupId: "consumables",
+      managementTemplate: "batch_consumable", standardType: "saline",
+      name: "擦手纸", baseUnit: "张"
+    };
+    source.products[0] = {
+      ...source.products[0]!, standardType: "saline", baseUnit: "张"
+    };
+    source.transactions = source.transactions.filter((entry) => entry.id !== "activate");
+    source.items[0] = {
+      ...source.items[0]!, groupId: "consumables", categoryName: "擦手纸",
+      initialUnitQuantity: 2, usageRatePerDay: 1
+    };
+    applyAppDataSnapshot(source);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    setPersistenceCommandAdapterForTests(async <T>() => {
+      await gate;
+      return undefined as T;
+    });
+    const clone = vi.spyOn(globalThis, "structuredClone");
+
+    const pending = completeBatchConsumableTimelineItem("item", "2026-08-26", 0);
+    expect(useTimelineItemStore.getState().items[0]?.status).toBe("active");
+    expect(useInventoryStore.getState().transactions).toHaveLength(2);
+    expect(useUsageFactStore.getState().facts).toHaveLength(0);
+    expect(clone).not.toHaveBeenCalled();
+
+    release();
+    await expect(pending).resolves.toMatchObject({
+      ledgerRemaining: 2, actualRemainingQuantity: 0, difference: -2
+    });
+    expect(useTimelineItemStore.getState().items[0]).toMatchObject({
+      status: "completed", endDate: "2026-08-27"
+    });
+    expect(useInventoryStore.getState().transactions.at(-1)).toMatchObject({
+      type: "loss", quantityDelta: -2, locationId: "home",
+      relatedInstanceId: "item"
+    });
+    expect(useUsageFactStore.getState().facts[0]).toMatchObject({
+      itemId: "item", kind: "extra_loss", quantity: 2, date: "2026-08-26"
+    });
+    expect(clone).not.toHaveBeenCalled();
+  });
+
+  it("uses a correction when the confirmed batch quantity exceeds the ledger", async () => {
+    const source = fixture();
+    source.profiles[0] = {
+      ...source.profiles[0]!, groupId: "consumables",
+      managementTemplate: "batch_consumable", standardType: "saline"
+    };
+    source.products[0] = { ...source.products[0]!, standardType: "saline" };
+    source.transactions = source.transactions.filter((entry) => entry.id !== "activate");
+    source.items[0] = {
+      ...source.items[0]!, groupId: "consumables", initialUnitQuantity: 2,
+      usageRatePerDay: 1
+    };
+    applyAppDataSnapshot(source);
+    setPersistenceCommandAdapterForTests(async <T>() => undefined as T);
+
+    await completeBatchConsumableTimelineItem("item", "2026-08-26", 3);
+
+    expect(useInventoryStore.getState().transactions.at(-1)).toMatchObject({
+      type: "correction", quantityDelta: 1, locationId: "home"
+    });
+    expect(useUsageFactStore.getState().facts).toHaveLength(0);
+  });
+
+  it("ends a batch consumable without an adjustment when the count matches", async () => {
+    const source = fixture();
+    source.profiles[0] = {
+      ...source.profiles[0]!, groupId: "consumables",
+      managementTemplate: "batch_consumable", standardType: "saline"
+    };
+    source.products[0] = { ...source.products[0]!, standardType: "saline" };
+    source.transactions = source.transactions.filter((entry) => entry.id !== "activate");
+    source.items[0] = {
+      ...source.items[0]!, groupId: "consumables", initialUnitQuantity: 2,
+      usageRatePerDay: 1
+    };
+    applyAppDataSnapshot(source);
+    const adapter = vi.fn();
+    setPersistenceCommandAdapterForTests(adapter);
+
+    await expect(
+      completeBatchConsumableTimelineItem("item", "2026-08-26", 2)
+    ).resolves.toMatchObject({ difference: 0 });
+
+    expect(useInventoryStore.getState().transactions).toHaveLength(2);
+    expect(useUsageFactStore.getState().facts).toHaveLength(0);
+    expect(adapter).toHaveBeenCalledWith("commit_app_data_mutation", {
+      mutation: expect.objectContaining({ appendTransactions: [], upsertUsageFacts: [] })
+    });
+  });
+
+  it("keeps batch state unchanged when completion persistence fails", async () => {
+    const source = fixture();
+    source.profiles[0] = {
+      ...source.profiles[0]!, groupId: "consumables",
+      managementTemplate: "batch_consumable", standardType: "saline"
+    };
+    source.products[0] = { ...source.products[0]!, standardType: "saline" };
+    source.transactions = source.transactions.filter((entry) => entry.id !== "activate");
+    source.items[0] = {
+      ...source.items[0]!, groupId: "consumables", initialUnitQuantity: 2,
+      usageRatePerDay: 1
+    };
+    applyAppDataSnapshot(source);
+    const before = collectAppDataSnapshot();
+    setPersistenceCommandAdapterForTests(async () => {
+      throw new Error("batch write failed");
+    });
+
+    await expect(
+      completeBatchConsumableTimelineItem("item", "2026-08-26", 0)
+    ).rejects.toThrow("batch write failed");
+    expect(collectAppDataSnapshot()).toEqual(before);
+  });
+
+  it("reopens a discarded item and reverses its fact without a full snapshot", async () => {
+    const source = fixture();
+    source.transactions.push({
+      id: "discard",
+      stockLotId: "lot",
+      occurredDate: "2026-08-26",
+      type: "loss",
+      quantityDelta: -1,
+      locationId: "home",
+      relatedInstanceId: "item"
+    });
+    source.usageFacts.push({
+      id: "discard-fact",
+      itemId: "item",
+      stockLotId: "lot",
+      transactionId: "discard",
+      date: "2026-08-26",
+      kind: "extra_loss",
+      quantity: 1
+    });
+    source.items[0] = {
+      ...source.items[0]!,
+      status: "completed",
+      endDate: "2026-08-27",
+      endReason: "提前结束/丢弃",
+      completionUsageFactId: "discard-fact",
+      stateIntervals: [
+        {
+          startDate: "2026-08-25",
+          endDate: "2026-08-27",
+          status: "active"
+        }
+      ],
+      locationIntervals: [
+        {
+          locationId: "home",
+          startDate: "2026-08-25",
+          endDate: "2026-08-27"
+        }
+      ]
+    };
+    applyAppDataSnapshot(source);
+    const adapter = vi.fn();
+    const commandAdapter: PersistenceCommandAdapter = async <T>(
+      command: string,
+      args?: Record<string, unknown>
+    ) => {
+      adapter(command, args);
+      return undefined as T;
+    };
+    setPersistenceCommandAdapterForTests(commandAdapter);
+    const reopened = {
+      ...source.items[0]!,
+      status: "active" as const,
+      endDate: null,
+      stateIntervals: [
+        { startDate: "2026-08-25" as const, endDate: null, status: "active" as const }
+      ],
+      locationIntervals: [
+        { locationId: "home", startDate: "2026-08-25" as const, endDate: null }
+      ]
+    };
+    delete reopened.endReason;
+    delete reopened.completionUsageFactId;
+    const clone = vi.spyOn(globalThis, "structuredClone");
+
+    await reopenDiscardedTimelineItems(
+      "discard-fact",
+      "2026-08-28",
+      [reopened]
+    );
+
+    expect(useTimelineItemStore.getState().items[0]?.status).toBe("active");
+    expect(useUsageFactStore.getState().facts).toHaveLength(0);
+    expect(useInventoryStore.getState().transactions.at(-1)).toEqual(
+      expect.objectContaining({
+        type: "reverse",
+        reversedTransactionId: "discard",
+        locationId: "home"
+      })
+    );
+    expect(clone).not.toHaveBeenCalled();
   });
 });

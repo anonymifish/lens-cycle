@@ -39,7 +39,14 @@ import {
   replaceUsageFact,
   reverseUsageFact
 } from "../../features/inventory/usageFacts";
-import { commitDataMutation } from "../../features/inventory/dataMutationRepository";
+import {
+  completeBatchConsumableTimelineItem,
+  commitTimelineItemInventoryUpdate,
+  commitTimelineItemUpdates,
+  commitDataMutation,
+  deleteMistakenTimelineItem,
+  reopenDiscardedTimelineItems
+} from "../../features/inventory/dataMutationRepository";
 import { assignLanes } from "../../features/timeline/domain/intervals";
 import {
   careEventDate,
@@ -102,6 +109,10 @@ import {
   historicalConsumptionRateMlPerDay,
   inclusiveCycleEndDate
 } from "../../features/timeline/domain/forecast";
+import {
+  LifecycleHistorySection,
+  type LifecycleHistoryEntry
+} from "./LifecycleHistorySection";
 import styles from "./TimelinePage.module.css";
 
 const LEFT_PANEL_WIDTH = 270;
@@ -203,13 +214,6 @@ interface UndoMove {
   oldReusableLensCycles: TimelineItem["reusableLensCycles"];
 }
 
-interface LifecycleHistoryEntry {
-  date: LocalDate;
-  label: string;
-  detail: string;
-  pauseIndex?: number;
-}
-
 type CareEventDialog =
   | { mode: "create" }
   | { mode: "edit"; eventId: string }
@@ -297,10 +301,6 @@ export function TimelinePage({
 
   const items = useTimelineItemStore((state) => state.items);
   const setItems = useTimelineItemStore((state) => state.setItems);
-  const updateItemDetails = useTimelineItemStore(
-    (state) => state.updateItemDetails
-  );
-  const deleteTimelineItem = useTimelineItemStore((state) => state.deleteItem);
   const careEvents = useTimelineCareEventStore((state) => state.events);
   const addCareEvent = useTimelineCareEventStore((state) => state.addEvent);
   const updateCareEvent = useTimelineCareEventStore((state) => state.updateEvent);
@@ -308,18 +308,10 @@ export function TimelinePage({
     (state) => state.completeEvent
   );
   const deleteCareEvent = useTimelineCareEventStore((state) => state.deleteEvent);
-  const deleteCareEventsForItem = useTimelineCareEventStore(
-    (state) => state.deleteEventsForItem
-  );
   const usageFacts = useUsageFactStore((state) => state.facts);
-  const deleteUsageFactsForItem = useUsageFactStore(
-    (state) => state.deleteFactsForItem
-  );
   const rescheduleActivation = useInventoryStore(
     (state) => state.rescheduleActivation
   );
-  const reverseActivation = useInventoryStore((state) => state.reverseActivation);
-  const transferStock = useInventoryStore((state) => state.transferStock);
   const consumptionHistoryRange = useForecastSettingsStore(
     (state) => state.consumptionHistoryRange
   );
@@ -471,9 +463,7 @@ export function TimelinePage({
       };
     });
     if (changed) {
-      void commitDataMutation(() => {
-        setItems(nextItems);
-      });
+      void commitTimelineItemUpdates(() => nextItems);
     }
   }, [
     consumptionHistoryRange,
@@ -715,6 +705,14 @@ export function TimelinePage({
   const selectedSourceAvailableUnits = selectedLot
     ? availableUnits(selectedLot.id, transactions)
     : 0;
+  const selectedLocationAvailableUnits =
+    selectedLot && selectedItem?.locationId
+      ? availableUnitsAtLocation(
+          selectedLot,
+          selectedItem.locationId,
+          transactions
+        )
+      : 0;
   const selectedLocation = selectedItem
     ? locations.find((location) => location.id === selectedItem.locationId) ??
       locations.find((location) => location.name === selectedItem.location)
@@ -738,7 +736,7 @@ export function TimelinePage({
     ? [
         {
           date: selectedItem.startDate,
-          label: "启用镜片",
+          label: "启用",
           detail: "实例开始使用"
         },
         ...(selectedItem.stateIntervals ?? []).flatMap((interval, index) => {
@@ -1019,6 +1017,26 @@ export function TimelinePage({
           </div>
         );
       }
+      const actualStocks = profileProducts.map((product) => ({
+        product,
+        quantity: productAvailableUnits(product.id, lots, transactions)
+      }));
+      if (actualStocks.length === 1) {
+        return (
+          <small>
+            实际库存 {actualStocks[0]!.quantity} {actualStocks[0]!.product.baseUnit}
+          </small>
+        );
+      }
+      return (
+        <div className={styles.replacementSummaries}>
+          {actualStocks.map(({ product, quantity }) => (
+            <small key={product.id}>
+              {productSummaryName(product)} · 实际库存 {quantity} {product.baseUnit}
+            </small>
+          ))}
+        </div>
+      );
     }
     if (profileProducts.length > 0) {
       const stocks = profileProducts.map((product) => ({
@@ -1263,10 +1281,34 @@ export function TimelinePage({
     event.preventDefault();
     if (!selectedItem || !lifecycleAction || actionSubmitting) return;
     const submittedAction = lifecycleAction;
-    const date = String(new FormData(event.currentTarget).get("date") ?? "") as LocalDate;
+    const formData = new FormData(event.currentTarget);
+    const date = String(formData.get("date") ?? "") as LocalDate;
 
     setActionSubmitting(true);
     try {
+      if (
+        lifecycleAction === "end" &&
+        selectedProfile?.managementTemplate === "batch_consumable"
+      ) {
+        const rawActualRemaining = String(
+          formData.get("actualRemainingQuantity") ?? ""
+        );
+        if (!rawActualRemaining.trim()) {
+          throw new Error("请填写实际剩余数量");
+        }
+        const actualRemainingQuantity = Number(rawActualRemaining);
+        await completeBatchConsumableTimelineItem(
+          selectedItem.id,
+          date,
+          actualRemainingQuantity
+        );
+        setLifecycleAction(null);
+        setLifecycleError(null);
+        setActionNotice(
+          `${selectedItem.label} 已结束使用，实际剩余 ${actualRemainingQuantity} ${selectedBaseUnit}`
+        );
+        return;
+      }
       if (
         lifecycleAction === "next" &&
         selectedProfile?.managementTemplate === "soft_reusable"
@@ -1351,119 +1393,119 @@ export function TimelinePage({
         if (!discardFact) {
           throw new Error("没有找到本次丢弃对应的库存损耗记录，无法安全撤销");
         }
-        await commitDataMutation(() => {
-          reverseUsageFact(discardFact.id, todayLocalDate());
-          setItems((current) =>
-            current.map((item) => {
-              if (item.id === selectedItem.id) return reopened;
-              if (
-                selectedProfile.managementTemplate === "discrete_dose" &&
-                item.sourceStockLotId === selectedItem.sourceStockLotId &&
-                item.status === "completed" &&
-                item.endReason === "提前结束/丢弃"
-              ) {
-                return reopenTimelineItem(item);
-              }
-              return item;
-            })
-          );
-        });
+        const reopenedItems = items
+          .map((item) => {
+            if (item.id === selectedItem.id) return reopened;
+            if (
+              selectedProfile.managementTemplate === "discrete_dose" &&
+              item.sourceStockLotId === selectedItem.sourceStockLotId &&
+              item.status === "completed" &&
+              item.endReason === "提前结束/丢弃"
+            ) {
+              return reopenTimelineItem(item);
+            }
+            return item;
+          })
+          .filter((item, index) => item !== items[index]);
+        await reopenDiscardedTimelineItems(
+          discardFact.id,
+          todayLocalDate(),
+          reopenedItems
+        );
         setLifecycleAction(null);
         setLifecycleError(null);
         setActionNotice(`${selectedItem.label} 已撤销丢弃并恢复使用`);
         return;
       }
-      await commitDataMutation(() => {
-        setItems((current) =>
-          current.map((item) => {
-            if (item.id !== selectedItem.id) return item;
-            if (
-              selectedProfile?.managementTemplate === "soft_reusable" &&
-              lifecycleAction === "end"
-            ) {
-              const cycles = reusableLensCyclesFor(item);
-              const activeIndex = cycles.findIndex(
-                (cycle) => cycle.status === "active"
-              );
-              if (activeIndex < 0) throw new Error("当前没有正在使用的镜片");
-              if (date < cycles[activeIndex]!.startDate) {
-                throw new Error("结束日期不能早于当前镜片启用日期");
-              }
-              const nextCycles = cycles.map((cycle, index) =>
-                index === activeIndex
-                  ? {
-                      ...cycle,
-                      endDate: addLocalDays(date, 1),
-                      status: "completed" as const
-                    }
-                  : cycle
-              );
-              const boxIsEmpty = (selectedRemainingQuantity ?? 0) === 0;
-              if (boxIsEmpty) {
-                return {
-                  ...endTimelineItem(item, date),
-                  reusableLensCycles: nextCycles
-                };
-              }
-              const nextItem = { ...item, reusableLensCycles: nextCycles };
-              delete nextItem.predictionDate;
-              return nextItem;
+      await commitTimelineItemUpdates((current) =>
+        current.map((item) => {
+          if (item.id !== selectedItem.id) return item;
+          if (
+            selectedProfile?.managementTemplate === "soft_reusable" &&
+            lifecycleAction === "end"
+          ) {
+            const cycles = reusableLensCyclesFor(item);
+            const activeIndex = cycles.findIndex(
+              (cycle) => cycle.status === "active"
+            );
+            if (activeIndex < 0) throw new Error("当前没有正在使用的镜片");
+            if (date < cycles[activeIndex]!.startDate) {
+              throw new Error("结束日期不能早于当前镜片启用日期");
             }
-            if (
-              selectedProfile?.managementTemplate === "soft_reusable" &&
-              lifecycleAction === "reopen"
-            ) {
-              const reopened = reopenTimelineItem(item);
-              const cycles = reusableLensCyclesFor(item);
-              const lastIndex = cycles.length - 1;
-              const nextCycles = cycles.map((cycle, index) =>
-                index === lastIndex
-                  ? { ...cycle, endDate: null, status: "active" as const }
-                  : cycle
-              );
+            const nextCycles = cycles.map((cycle, index) =>
+              index === activeIndex
+                ? {
+                    ...cycle,
+                    endDate: addLocalDays(date, 1),
+                    status: "completed" as const
+                  }
+                : cycle
+            );
+            const boxIsEmpty = (selectedRemainingQuantity ?? 0) === 0;
+            if (boxIsEmpty) {
               return {
-                ...reopened,
-                predictionDate: nextCycles[lastIndex]!.predictionDate,
+                ...endTimelineItem(item, date),
                 reusableLensCycles: nextCycles
               };
             }
-            if (lifecycleAction === "reopen") return reopenTimelineItem(item);
-            if (lifecycleAction === "pause") return pauseTimelineItem(item, date);
-            if (lifecycleAction === "resume") {
-              const resumed = resumeTimelineItem(item, date);
-              const template = profileById.get(item.categoryId)?.managementTemplate;
-              const pausedStart = item.stateIntervals?.at(-1)?.startDate;
-              if (
-                pausedStart &&
-                (template === "opened_container" || template === "batch_consumable")
-              ) {
-                const delayDays = daysBetween(pausedStart, date);
-                return {
-                  ...resumed,
-                  ...(resumed.predictionDate
-                    ? {
-                        predictionDate: addLocalDays(
-                          resumed.predictionDate,
-                          delayDays
-                        )
-                      }
-                    : {}),
-                  ...(resumed.depletionPredictionDate
-                    ? {
-                        depletionPredictionDate: addLocalDays(
-                          resumed.depletionPredictionDate,
-                          delayDays
-                        )
-                      }
-                    : {})
-                };
-              }
-              return resumed;
+            const nextItem = { ...item, reusableLensCycles: nextCycles };
+            delete nextItem.predictionDate;
+            return nextItem;
+          }
+          if (
+            selectedProfile?.managementTemplate === "soft_reusable" &&
+            lifecycleAction === "reopen"
+          ) {
+            const reopened = reopenTimelineItem(item);
+            const cycles = reusableLensCyclesFor(item);
+            const lastIndex = cycles.length - 1;
+            const nextCycles = cycles.map((cycle, index) =>
+              index === lastIndex
+                ? { ...cycle, endDate: null, status: "active" as const }
+                : cycle
+            );
+            return {
+              ...reopened,
+              predictionDate: nextCycles[lastIndex]!.predictionDate,
+              reusableLensCycles: nextCycles
+            };
+          }
+          if (lifecycleAction === "reopen") return reopenTimelineItem(item);
+          if (lifecycleAction === "pause") return pauseTimelineItem(item, date);
+          if (lifecycleAction === "resume") {
+            const resumed = resumeTimelineItem(item, date);
+            const template = profileById.get(item.categoryId)?.managementTemplate;
+            const pausedStart = item.stateIntervals?.at(-1)?.startDate;
+            if (
+              pausedStart &&
+              (template === "opened_container" || template === "batch_consumable")
+            ) {
+              const delayDays = daysBetween(pausedStart, date);
+              return {
+                ...resumed,
+                ...(resumed.predictionDate
+                  ? {
+                      predictionDate: addLocalDays(
+                        resumed.predictionDate,
+                        delayDays
+                      )
+                    }
+                  : {}),
+                ...(resumed.depletionPredictionDate
+                  ? {
+                      depletionPredictionDate: addLocalDays(
+                        resumed.depletionPredictionDate,
+                        delayDays
+                      )
+                    }
+                  : {})
+              };
             }
-            return endTimelineItem(item, date);
-          })
-        );
-      });
+            return resumed;
+          }
+          return endTimelineItem(item, date);
+        })
+      );
       setLifecycleAction(null);
       setLifecycleError(null);
       setActionNotice(
@@ -1500,9 +1542,8 @@ export function TimelinePage({
       : null;
 
     try {
-      await commitDataMutation(() => {
-        setItems((current) =>
-          current.map((item) => {
+      await commitTimelineItemUpdates((current) =>
+        current.map((item) => {
             if (item.id !== selectedItem.id) return item;
             const sourcePause = item.stateIntervals?.[editingPauseIndex];
             const edited = editPausedInterval(
@@ -1539,8 +1580,7 @@ export function TimelinePage({
                 : {})
             };
           })
-        );
-      });
+      );
       setEditingPauseIndex(null);
       setLifecycleError(null);
     } catch (error) {
@@ -1909,24 +1949,7 @@ export function TimelinePage({
     const deletedLabel = selectedItem.label;
     setActionSubmitting(true);
     try {
-      await commitDataMutation(() => {
-        const hasActivation = effectiveInventoryTransactions(transactions).some(
-          (transaction) =>
-            (transaction.type === "activate" ||
-              transaction.type === "package_open" ||
-              transaction.type === "loose_allocate") &&
-            transaction.relatedInstanceId === selectedItem.id
-        );
-        if (hasActivation) {
-          reverseActivation(selectedItem.id, todayLocalDate());
-        }
-        [...selectedUsageFacts].forEach((fact) =>
-          reverseUsageFact(fact.id, todayLocalDate())
-        );
-        deleteCareEventsForItem(selectedItem.id);
-        deleteUsageFactsForItem(selectedItem.id);
-        deleteTimelineItem(selectedItem.id);
-      });
+      await deleteMistakenTimelineItem(selectedItem.id, todayLocalDate());
       setShowDeleteItemDialog(false);
       setDeleteItemError(null);
       closeItemDetails();
@@ -2574,67 +2597,122 @@ export function TimelinePage({
             .filter((date): date is LocalDate => Boolean(date))
             .sort()[0]
         : calculatedPredictionDate;
-    try {
-      await commitDataMutation(() => {
-        if (startDate !== selectedItem.startDate) {
-          rescheduleActivation(selectedItem.id, startDate);
-        }
-        if (
-          selectedItem.locationId &&
-          selectedItem.locationId !== location.id
-        ) {
-          const allocatedRemaining = ["soft_daily", "soft_reusable"].includes(
-            selectedProfile?.managementTemplate ?? ""
-          )
-            ? Math.max(0, selectedRemainingQuantity ?? 0)
-            : 0;
-          if (allocatedRemaining > 0 && selectedItem.sourceStockLotId) {
-            transferStock({
-              stockLotId: selectedItem.sourceStockLotId,
-              fromLocationId: selectedItem.locationId,
-              toLocationId: location.id,
-              quantity: allocatedRemaining,
-              occurredDate: todayLocalDate(),
-              reason: `实例“${selectedItem.label}”移动地点`
-            });
-          }
-          setItems((current) =>
-            current.map((item) => {
-              if (item.id !== selectedItem.id) return item;
-              const intervals = item.locationIntervals?.map((entry) => ({
-                ...entry
-              })) ?? [
-                {
-                  locationId: selectedItem.locationId!,
-                  startDate: item.startDate,
-                  endDate: null
-                }
-              ];
-              const last = intervals.at(-1);
-              if (last?.startDate === todayLocalDate()) {
-                last.locationId = location.id;
-              } else {
-                if (last) last.endDate = todayLocalDate();
-                intervals.push({
-                  locationId: location.id,
-                  startDate: todayLocalDate(),
-                  endDate: null
-                });
-              }
-              return { ...item, locationIntervals: intervals };
-            })
-          );
-        }
-        updateItemDetails(selectedItem.id, {
-          label,
-          startDate,
+    const movedLocation =
+      selectedItem.locationId && selectedItem.locationId !== location.id;
+    const nextLocationIntervals = selectedItem.locationIntervals?.map((entry) => ({
+      ...entry
+    })) ??
+      (selectedItem.locationId
+        ? [{
+            locationId: selectedItem.locationId,
+            startDate: selectedItem.startDate,
+            endDate: null
+          }]
+        : []);
+    if (movedLocation) {
+      const last = nextLocationIntervals.at(-1);
+      if (last?.startDate === todayLocalDate()) {
+        last.locationId = location.id;
+      } else {
+        if (last) last.endDate = todayLocalDate();
+        nextLocationIntervals.push({
           locationId: location.id,
-          location: location.name,
-          ...(nextPredictionDate ? { predictionDate: nextPredictionDate } : {}),
-          ...(openedExpiryDate ? { openedExpiryDate } : {}),
-          ...(usageRatePerDay > 0 ? { usageRatePerDay } : {})
+          startDate: todayLocalDate(),
+          endDate: null
         });
-      });
+      }
+    }
+    if (nextLocationIntervals[0]) {
+      nextLocationIntervals[0].startDate = startDate;
+    }
+    const nextItem: TimelineItem = {
+      ...selectedItem,
+      label,
+      startDate,
+      locationId: location.id,
+      location: location.name,
+      ...(selectedItem.stateIntervals
+        ? {
+            stateIntervals: selectedItem.stateIntervals.map((interval, index) =>
+              index === 0 ? { ...interval, startDate } : { ...interval }
+            )
+          }
+        : {}),
+      ...(nextLocationIntervals.length > 0
+        ? { locationIntervals: nextLocationIntervals }
+        : {}),
+      ...(selectedItem.eyeAssignmentIntervals
+        ? {
+            eyeAssignmentIntervals: selectedItem.eyeAssignmentIntervals.map(
+              (interval, index) =>
+                index === 0 ? { ...interval, startDate } : { ...interval }
+            )
+          }
+        : {}),
+      ...(nextPredictionDate ? { predictionDate: nextPredictionDate } : {}),
+      ...(openedExpiryDate ? { openedExpiryDate } : {}),
+      ...(usageRatePerDay > 0 ? { usageRatePerDay } : {})
+    };
+    const rescheduledTransactions: InventoryTransaction[] =
+      startDate === selectedItem.startDate
+        ? []
+        : effectiveInventoryTransactions(transactions)
+            .filter(
+              (transaction) =>
+                ["activate", "package_open", "loose_allocate"].includes(
+                  transaction.type
+                ) &&
+                transaction.reversibleWithInstance !== false &&
+                transaction.relatedInstanceId === selectedItem.id &&
+                transaction.occurredDate !== startDate
+            )
+            .flatMap((original) => [
+              {
+                id: `tx-${crypto.randomUUID()}`,
+                stockLotId: original.stockLotId,
+                occurredDate: todayLocalDate(),
+                type: "reverse" as const,
+                quantityDelta: -original.quantityDelta,
+                reversedTransactionId: original.id,
+                ...(original.locationId ? { locationId: original.locationId } : {}),
+                reason: "修改实例启用日期"
+              },
+              {
+                ...original,
+                id: `tx-${crypto.randomUUID()}`,
+                occurredDate: startDate
+              }
+            ]);
+    const remainingAtSource =
+      movedLocation && selectedLot && selectedItem.locationId
+        ? Math.max(
+            0,
+            availableUnitsAtLocation(
+              selectedLot,
+              selectedItem.locationId,
+              transactions
+            )
+          )
+        : 0;
+    const transferTransactions: InventoryTransaction[] =
+      remainingAtSource > 0 && selectedItem.sourceStockLotId && selectedItem.locationId
+        ? [{
+            id: `tx-${crypto.randomUUID()}`,
+            stockLotId: selectedItem.sourceStockLotId,
+            occurredDate: todayLocalDate(),
+            type: "transfer",
+            quantityDelta: 0,
+            fromLocationId: selectedItem.locationId,
+            toLocationId: location.id,
+            transferQuantity: remainingAtSource,
+            reason: `时间轴实例“${selectedItem.label}”移动地点并转移全部剩余库存`
+          }]
+        : [];
+    try {
+      await commitTimelineItemInventoryUpdate(nextItem, [
+        ...rescheduledTransactions,
+        ...transferTransactions
+      ]);
     } catch (error) {
       setDetailError(error instanceof Error ? error.message : "地点或实例资料更新失败");
       return;
@@ -3250,7 +3328,8 @@ export function TimelinePage({
                           dragPreview?.itemId === item.id ? dragPreview.days : 0;
                         const x1 =
                           dateToX(addLocalDays(item.startDate, previewDays), viewport);
-                        const actualEnd = item.endDate ?? todayLocalDate();
+                        const actualEnd =
+                          item.endDate ?? addLocalDays(todayLocalDate(), 1);
                         const x2 = dateToX(addLocalDays(actualEnd, previewDays), viewport);
                         const lane = row.laneByItem.get(item.id) ?? 0;
                         const y = row.y + 12 + lane * LANE_HEIGHT;
@@ -3761,9 +3840,11 @@ export function TimelinePage({
                       : selectedProfile?.managementTemplate === "discrete_dose"
                         ? `已使用 ${selectedUsedQuantity} ${selectedBaseUnit}`
                         : selectedProfile?.managementTemplate === "batch_consumable"
-                          ? `预计剩余 ${Math.round(
-                              Math.max(0, selectedPredictedQuantity ?? 0)
-                            )} ${selectedBaseUnit}`
+                          ? selectedItem.status === "completed"
+                            ? `实际剩余 ${selectedLocationAvailableUnits} ${selectedBaseUnit}`
+                            : `预计剩余 ${Math.round(
+                                Math.max(0, selectedPredictedQuantity ?? 0)
+                              )} ${selectedBaseUnit}`
                         : `已使用 ${selectedItemUsedDays} 天`}
                   </dd>
                 </div>
@@ -4193,41 +4274,13 @@ export function TimelinePage({
                   )}
                 </section>
               )}
-              {selectedProfile?.managementTemplate === "rigid_long_term" && (
-                <section className={styles.usageHistory}>
-                  <div className={styles.usageHistoryHeading}>
-                    <div>
-                      <strong>使用历史</strong>
-                      <span>{lifecycleHistory.length} 个状态节点</span>
-                    </div>
-                  </div>
-                  <div className={styles.usageHistoryList}>
-                    {lifecycleHistory.map((entry, index) => (
-                      <article
-                        className={styles.usageHistoryRecord}
-                        key={`${entry.date}-${entry.label}-${index}`}
-                      >
-                        <span className={styles.usageHistoryDot} />
-                        <div>
-                          <strong>{entry.label}</strong>
-                          <span>{displayLocalDate(entry.date)} · {entry.detail}</span>
-                        </div>
-                        {entry.pauseIndex !== undefined && (
-                          <button
-                            onClick={() => {
-                              setEditingPauseIndex(entry.pauseIndex!);
-                              setLifecycleError(null);
-                            }}
-                            type="button"
-                          >
-                            编辑阶段
-                          </button>
-                        )}
-                      </article>
-                    ))}
-                  </div>
-                </section>
-              )}
+              <LifecycleHistorySection
+                entries={lifecycleHistory}
+                onEditPause={(pauseIndex) => {
+                  setEditingPauseIndex(pauseIndex);
+                  setLifecycleError(null);
+                }}
+              />
               {(selectedItem.locationIntervals?.length ?? 0) > 0 && (
                 <section className={styles.usageHistory}>
                   <div className={styles.usageHistoryHeading}>
@@ -4564,6 +4617,11 @@ export function TimelinePage({
                           ? "结束当前盒内镜片的使用周期；"
                           : "记录实际结束日期并把实例标记为结束使用；"}
                       </li>
+                      {selectedProfile?.managementTemplate === "batch_consumable" && (
+                        <li>
+                          按实际盘点数量追加损耗或盘盈更正；预计剩余只作填写参考。
+                        </li>
+                      )}
                       <li>时间轴不再显示尚未到达的预计更换标记；</li>
                       <li>如为误操作，可稍后从详情中“撤销结束”。</li>
                     </>
@@ -4582,6 +4640,9 @@ export function TimelinePage({
                         selectedItem.endReason === "提前结束/丢弃" && (
                           <li>同步撤销本次丢弃产生的库存损耗。</li>
                         )}
+                      {selectedProfile?.managementTemplate === "batch_consumable" && (
+                        <li>结束时确认的实际盘点及其库存更正会保留。</li>
+                      )}
                     </>
                   )}
                 </ul>
@@ -4619,6 +4680,24 @@ export function TimelinePage({
                 />
               </label>
             )}
+            {lifecycleAction === "end" &&
+              selectedProfile?.managementTemplate === "batch_consumable" && (
+                <label>
+                  实际剩余数量（{selectedBaseUnit}）
+                  <input
+                    min="0"
+                    name="actualRemainingQuantity"
+                    required
+                    step="1"
+                    type="number"
+                  />
+                  <small>
+                    预计剩余 {Math.round(Math.max(0, selectedPredictedQuantity ?? 0))}{" "}
+                    {selectedBaseUnit}；账面库存 {selectedLocationAvailableUnits}{" "}
+                    {selectedBaseUnit}。请按实际盘点填写。
+                  </small>
+                </label>
+              )}
             <div className={styles.modalActions}>
               <button
                 onClick={() => {
@@ -5238,7 +5317,7 @@ export function TimelinePage({
             <form className={styles.addModal} onSubmit={handlePauseEdit}>
               <div className={styles.modalHeading}>
                 <div>
-                  <span>硬镜生命周期</span>
+                  <span>用品生命周期</span>
                   <h2>编辑暂停记录</h2>
                 </div>
                 <button

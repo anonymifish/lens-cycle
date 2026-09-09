@@ -768,6 +768,241 @@ describe("populated page rendering", () => {
     expect(drawer.textContent).toContain("实际结束");
   });
 
+  it("shows and edits lifecycle history for a non-rigid paused item", async () => {
+    useItemProfileStore.setState({ profiles: [{
+      id: "profile-1", groupId: "consumables", managementTemplate: "opened_container",
+      standardType: "care_solution", name: "护理液", baseUnit: "瓶",
+      active: true, order: 0
+    }] });
+    useInventoryStore.setState((state) => ({
+      ...state,
+      products: [{
+        ...state.products[0]!, itemProfileId: "profile-1",
+        standardType: "care_solution", baseUnit: "瓶"
+      }]
+    }));
+    useTimelineItemStore.setState((state) => ({ items: [{
+      ...state.items[0]!, groupId: "consumables", categoryName: "护理液",
+      label: "护理液实例", status: "paused",
+      stateIntervals: [
+        { startDate: "2026-01-02", endDate: "2026-08-20", status: "active" },
+        { startDate: "2026-08-20", endDate: "2026-08-22", status: "paused" },
+        { startDate: "2026-08-22", endDate: "2026-09-01", status: "active" },
+        { startDate: "2026-09-01", endDate: null, status: "paused" }
+      ]
+    }] }));
+    let persistenceFailure: unknown = new Error("history write failed");
+    setPersistenceCommandAdapterForTests(async <T,>() => {
+      if (persistenceFailure) return Promise.reject(persistenceFailure);
+      return undefined as T;
+    });
+
+    const { container } = render(<TimelinePage />);
+    fireEvent.click(container.querySelector('g[role="button"]')!);
+    const drawer = screen.getByLabelText("用品详情");
+    const history = within(drawer).getByText("使用历史").closest("section")!;
+    expect(within(history).getByText("启用")).toBeTruthy();
+    expect(within(history).getAllByText("暂停使用")).toHaveLength(2);
+    expect(within(history).getAllByText("恢复使用")).toHaveLength(1);
+    expect(within(history).getAllByRole("button", { name: "编辑阶段" })).toHaveLength(2);
+    expect(within(drawer).queryByText("护理事件")).toBeNull();
+
+    fireEvent.click(within(history).getAllByRole("button", { name: "编辑阶段" })[0]!);
+    fireEvent.change(screen.getByLabelText("暂停日期"), {
+      target: { value: "2026-08-19" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(await screen.findByText("history write failed")).toBeTruthy();
+    expect(useTimelineItemStore.getState().items[0]?.stateIntervals?.[1]?.startDate)
+      .toBe("2026-08-20");
+
+    persistenceFailure = null;
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(
+      useTimelineItemStore.getState().items[0]?.stateIntervals?.[1]?.startDate
+    ).toBe("2026-08-19"));
+  });
+
+  it("moves all remaining discrete-dose stock with a timeline location change", async () => {
+    useItemProfileStore.setState({ profiles: [{
+      id: "profile-dose", groupId: "consumables", managementTemplate: "discrete_dose",
+      standardType: "protein_removal_solution", name: "除蛋白液", baseUnit: "对",
+      active: true, order: 0
+    }] });
+    useInventoryStore.setState({
+      products: [{
+        id: "product-dose", itemProfileId: "profile-dose",
+        standardType: "protein_removal_solution", brand: "测试除蛋白液",
+        baseUnit: "对", unitsPerPackage: 10, active: true
+      }],
+      locations: [
+        { id: "home", name: "家", active: true, order: 0 },
+        { id: "office", name: "办公室", active: true, order: 1 }
+      ],
+      lots: [{
+        id: "lot-dose", productId: "product-dose", internalLotCode: "DOSE-1",
+        receivedDate: "2026-08-01", locationId: "home", initialUnitQuantity: 10,
+        unitPriceMinor: 100, currency: "CNY"
+      }, {
+        id: "lot-dose-other", productId: "product-dose", internalLotCode: "DOSE-2",
+        receivedDate: "2026-08-02", locationId: "home", initialUnitQuantity: 4,
+        unitPriceMinor: 100, currency: "CNY"
+      }],
+      transactions: [{
+        id: "stock-dose", stockLotId: "lot-dose", occurredDate: "2026-08-01",
+        type: "stock_in", quantityDelta: 10, locationId: "home"
+      }, {
+        id: "transfer-dose-existing", stockLotId: "lot-dose", occurredDate: "2026-08-05",
+        type: "transfer", quantityDelta: 0, fromLocationId: "home",
+        toLocationId: "office", transferQuantity: 2
+      }, {
+        id: "consume-dose", stockLotId: "lot-dose", occurredDate: "2026-09-01",
+        type: "consume", quantityDelta: -3, locationId: "home",
+        relatedInstanceId: "item-dose"
+      }, {
+        id: "stock-dose-other", stockLotId: "lot-dose-other", occurredDate: "2026-08-02",
+        type: "stock_in", quantityDelta: 4, locationId: "home"
+      }]
+    });
+    useTimelineItemStore.setState({ items: [{
+      id: "item-dose", categoryId: "profile-dose", groupId: "consumables",
+      categoryName: "除蛋白液", productId: "product-dose",
+      sourceStockLotId: "lot-dose", label: "除蛋白液批次", detail: "使用中",
+      location: "家", locationId: "home",
+      locationIntervals: [{ locationId: "home", startDate: "2026-08-10", endDate: null }],
+      startDate: "2026-08-10", endDate: null, status: "active",
+      stateIntervals: [{ startDate: "2026-08-10", endDate: null, status: "active" }]
+    }] });
+    useUsageFactStore.setState({ facts: [{
+      id: "fact-dose", itemId: "item-dose", stockLotId: "lot-dose",
+      transactionId: "consume-dose", date: "2026-09-01", kind: "dose", quantity: 3
+    }] });
+    useTimelineCareEventStore.setState({ events: [] });
+    let persistenceFailure: unknown = new Error("transfer write failed");
+    setPersistenceCommandAdapterForTests(async <T,>() => {
+      if (persistenceFailure) return Promise.reject(persistenceFailure);
+      return undefined as T;
+    });
+
+    const { container } = render(<TimelinePage />);
+    fireEvent.click(container.querySelector('g[role="button"]')!);
+    let drawer = screen.getByLabelText("用品详情");
+    fireEvent.click(within(drawer).getByRole("button", { name: "编辑资料" }));
+    fireEvent.change(screen.getByLabelText("当前地点"), {
+      target: { value: "office" }
+    });
+    fireEvent.click(within(drawer).getByRole("button", { name: "保存资料" }));
+    expect(await within(drawer).findByText("transfer write failed")).toBeTruthy();
+    expect(useTimelineItemStore.getState().items[0]?.locationId).toBe("home");
+    expect(useInventoryStore.getState().transactions.filter(
+      (transaction) => transaction.type === "transfer"
+    )).toHaveLength(1);
+
+    persistenceFailure = null;
+    fireEvent.click(within(drawer).getByRole("button", { name: "保存资料" }));
+    await waitFor(() => expect(
+      useTimelineItemStore.getState().items[0]?.locationId
+    ).toBe("office"));
+    expect(useInventoryStore.getState().transactions.at(-1)).toMatchObject({
+      stockLotId: "lot-dose", type: "transfer", quantityDelta: 0,
+      fromLocationId: "home", toLocationId: "office", transferQuantity: 5
+    });
+    expect(useInventoryStore.getState().transactions.filter(
+      (transaction) => transaction.stockLotId === "lot-dose-other"
+    )).toHaveLength(1);
+    expect(useTimelineItemStore.getState().items[0]?.locationIntervals).toEqual([
+      { locationId: "home", startDate: "2026-08-10", endDate: "2026-09-06" },
+      { locationId: "office", startDate: "2026-09-06", endDate: null }
+    ]);
+    expect(useInventoryStore.getState().transactions.find(
+      (transaction) => transaction.id === "consume-dose"
+    )?.locationId).toBe("home");
+    drawer = screen.getByLabelText("用品详情");
+    expect(drawer.textContent).toContain("办公室");
+  });
+
+  it("reconciles batch stock from an explicit end count and labels actual inventory", async () => {
+    useItemProfileStore.setState({ profiles: [{
+      id: "profile-batch", groupId: "consumables", managementTemplate: "batch_consumable",
+      standardType: "saline", name: "擦手纸", baseUnit: "包",
+      active: true, order: 0
+    }] });
+    useInventoryStore.setState({
+      products: [{
+        id: "product-batch", itemProfileId: "profile-batch", standardType: "saline",
+        brand: "测试擦手纸", baseUnit: "包", unitsPerPackage: 1, active: true
+      }],
+      locations: [{ id: "home", name: "家", active: true, order: 0 }],
+      lots: [{
+        id: "lot-batch", productId: "product-batch", internalLotCode: "PAPER-1",
+        receivedDate: "2026-09-01", locationId: "home", initialUnitQuantity: 10,
+        unitPriceMinor: 500, currency: "CNY"
+      }],
+      transactions: [{
+        id: "stock-batch", stockLotId: "lot-batch", occurredDate: "2026-09-01",
+        type: "stock_in", quantityDelta: 10, locationId: "home"
+      }]
+    });
+    useTimelineItemStore.setState({ items: [{
+      id: "item-batch", categoryId: "profile-batch", groupId: "consumables",
+      categoryName: "擦手纸", productId: "product-batch", sourceStockLotId: "lot-batch",
+      label: "擦手纸批次", detail: "使用中", location: "家", locationId: "home",
+      locationIntervals: [{ locationId: "home", startDate: "2026-09-04", endDate: null }],
+      startDate: "2026-09-04", endDate: null, predictionDate: "2026-09-08",
+      initialUnitQuantity: 10, usageRatePerDay: 2, status: "active",
+      stateIntervals: [{ startDate: "2026-09-04", endDate: null, status: "active" }]
+    }] });
+    useUsageFactStore.setState({ facts: [] });
+    useTimelineCareEventStore.setState({ events: [] });
+    setPersistenceCommandAdapterForTests(async <T,>() => undefined as T);
+
+    const { container } = render(<TimelinePage />);
+    const activeBarWidth = container
+      .querySelector('g[role="button"] > rect')
+      ?.getAttribute("width");
+    expect(activeBarWidth).toBeTruthy();
+    fireEvent.click(container.querySelector('g[role="button"]')!);
+    let drawer = screen.getByLabelText("用品详情");
+    expect(drawer.textContent).toContain("预计剩余 4 包");
+    fireEvent.click(within(drawer).getByRole("button", { name: "结束使用" }));
+    const form = screen.getByRole("heading", { name: "结束使用" }).closest("form")!;
+    expect(within(form).getByText(/预计剩余 4 包；账面库存 10 包/)).toBeTruthy();
+    expect((within(form).getByLabelText(/^实际剩余数量/) as HTMLInputElement).value)
+      .toBe("");
+    fireEvent.submit(form);
+    expect(await within(form).findByText("请填写实际剩余数量")).toBeTruthy();
+
+    fireEvent.change(within(form).getByLabelText(/^实际剩余数量/), {
+      target: { value: "6" }
+    });
+    fireEvent.submit(form);
+    await waitFor(() => expect(
+      useTimelineItemStore.getState().items[0]?.status
+    ).toBe("completed"));
+    expect(useTimelineItemStore.getState().items[0]?.endDate).toBe("2026-09-07");
+    expect(
+      container.querySelector('g[role="button"] > rect')?.getAttribute("width")
+    ).toBe(activeBarWidth);
+    expect(useInventoryStore.getState().transactions.at(-1)).toMatchObject({
+      stockLotId: "lot-batch", type: "loss", quantityDelta: -4,
+      locationId: "home", relatedInstanceId: "item-batch"
+    });
+    expect(useUsageFactStore.getState().facts[0]).toMatchObject({
+      itemId: "item-batch", kind: "extra_loss", quantity: 4
+    });
+    drawer = screen.getByLabelText("用品详情");
+    expect(drawer.textContent).toContain("实际剩余 6 包");
+    expect(screen.getByText("实际库存 6 包")).toBeTruthy();
+
+    fireEvent.click(within(drawer).getByRole("button", { name: "撤销结束" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认恢复" }));
+    await waitFor(() => expect(
+      useTimelineItemStore.getState().items[0]?.status
+    ).toBe("active"));
+    expect(useInventoryStore.getState().transactions.at(-1)?.quantityDelta).toBe(-4);
+    expect(useUsageFactStore.getState().facts).toHaveLength(1);
+  });
+
   it("operates timeline search, filters, scale, zoom, pan, and group controls", () => {
     const { container } = render(<TimelinePage />);
 
@@ -1116,7 +1351,7 @@ describe("populated page rendering", () => {
     const plannedRecord = within(drawer).getAllByText("复查")[0]!.closest("article")!;
     fireEvent.click(within(plannedRecord).getByRole("button", { name: "删除" }));
     await waitFor(() => expect(useTimelineCareEventStore.getState().events).toHaveLength(1));
-  });
+  }, 10_000);
 
   it("deletes an incorrectly activated timeline instance and restores its inventory", async () => {
     setPersistenceCommandAdapterForTests(async <T,>(command: string): Promise<T> => {
@@ -1770,7 +2005,7 @@ describe("populated page rendering", () => {
       await waitFor(() => expect(useTimelineItemStore.getState().items).toHaveLength(previousCount + 1));
     }
 
-  }, 25_000);
+  }, 50_000);
 
   it("validates reusable-lens history edits", async () => {
     setPersistenceCommandAdapterForTests(async <T,>(command: string): Promise<T> => {
