@@ -1,0 +1,62 @@
+.root {
+  position: relative;
+  width: 100%;
+}
+
+.root .textInput {
+  width: 100%;
+  padding-right: 42px;
+  font-variant-numeric: tabular-nums;
+}
+
+.calendarButton {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  display: grid;
+  width: 32px;
+  height: 30px;
+  padding: 0;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  transform: translateY(-50%);
+  z-index: 1;
+  place-items: center;
+}
+
+.calendarButton:hover {
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
+.calendarButton:active {
+  transform: translateY(calc(-50% + 1px));
+}
+
+.calendarButton:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.root .picker {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  right: 4px;
+  width: 34px;
+  height: 30px;
+  padding: 0;
+  cursor: pointer;
+  border: 0;
+  opacity: 0;
+  transform: translateY(-50%);
+}
+
+.root .picker::-webkit-calendar-picker-indicator {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+}

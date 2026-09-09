@@ -1,0 +1,67 @@
+# Dependencies and package-manager caches
+/node_modules/
+/.pnpm-store/
+/.pnpm-store-local/
+
+# Frontend and Rust build outputs
+/dist/
+/coverage/
+/src-tauri/target/
+/src-tauri/target-*/
+/src-tauri/gen/schemas/
+*.tsbuildinfo
+.eslintcache
+.vite/
+
+# Isolated QA and historical generated directories
+/artifacts/*
+!/artifacts/README.md
+/target-desktop-test/
+/target-storage-test/
+/target-progress-audit/
+
+# Locally built distributables; release notes may remain tracked
+/releases/**/*.exe
+/releases/**/*.msi
+/releases/**/*.msix
+/releases/**/*.zip
+/releases/**/*.pdb
+/releases/**/*.sig
+
+# Local databases, sidecars and backups
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.bak
+
+# Secrets and machine-local environment files
+.env
+.env.*
+!.env.example
+*.env
+*.env.*
+*.pem
+*.key
+*.pfx
+*.p12
+*.cer
+*.crt
+
+# Logs, temporary files, editors and operating systems
+*.log
+*.tmp
+*.temp
+*.swp
+*~
+/.idea/
+/.vs/
+/.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini

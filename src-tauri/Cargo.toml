@@ -1,0 +1,22 @@
+[package]
+name = "lens-cycle"
+version = "0.1.0"
+description = "Personal eye-care lifecycle timeline"
+authors = ["Lens Cycle"]
+license = "GPL-3.0-only"
+edition = "2021"
+
+[lib]
+name = "lens_cycle_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-single-instance = "2"

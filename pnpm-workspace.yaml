@@ -1,0 +1,3 @@
+minimumReleaseAgeExclude:
+  - vite@8.2.0
+storeDir: .pnpm-store-local

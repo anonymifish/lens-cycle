@@ -1,0 +1,28 @@
+:root {
+  color-scheme: light;
+  --color-bg: #f5f7fb;
+  --color-surface: #ffffff;
+  --color-surface-subtle: #f7f9fc;
+  --color-text: #162033;
+  --color-text-muted: #667085;
+  --color-border: #e1e6ef;
+  --color-border-strong: #ccd4e1;
+  --color-primary: #315cf5;
+  --color-primary-soft: #eef2ff;
+  --color-active: #10b981;
+  --color-paused: #f59e0b;
+  --color-planned: #8b5cf6;
+  --color-completed: #3b82f6;
+  --color-review: #0ea5e9;
+  --color-protein: #14b8a6;
+  --color-forecast: #8b5cf6;
+  --color-historical-paused: #94a3b8;
+  --color-danger: #ef4444;
+  --shadow-card: 0 1px 2px rgb(23 32 51 / 3%), 0 8px 24px rgb(23 32 51 / 4%);
+  --shadow-elevated: 0 16px 44px rgb(23 32 51 / 12%);
+  --radius-sm: 9px;
+  --radius-md: 13px;
+  --radius-lg: 18px;
+  --page-padding-x: 32px;
+  --font-ui: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+}

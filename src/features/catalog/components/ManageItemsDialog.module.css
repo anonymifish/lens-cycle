@@ -1,0 +1,306 @@
+.backdrop {
+  position: fixed;
+  z-index: 120;
+  inset: 0;
+  display: grid;
+  padding: 34px;
+  background: rgb(23 32 51 / 32%);
+  backdrop-filter: blur(4px);
+  place-items: center;
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(820px, 100%);
+  max-height: min(780px, calc(100vh - 68px));
+  overflow: hidden;
+  background: white;
+  border: 1px solid rgb(255 255 255 / 65%);
+  border-radius: 18px;
+  box-shadow: 0 32px 90px rgb(23 32 51 / 28%);
+}
+
+.heading {
+  display: flex;
+  justify-content: space-between;
+  padding: 24px 26px 18px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.heading span {
+  color: var(--color-primary);
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.16em;
+}
+
+.heading h2 {
+  margin: 4px 0 4px;
+  font-size: 22px;
+}
+
+.heading p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.heading > button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  color: var(--color-text-muted);
+  place-items: center;
+}
+
+.heading > button:hover {
+  background: var(--color-surface-subtle);
+}
+
+.groupTabs {
+  display: flex;
+  gap: 8px;
+  padding: 16px 26px 0;
+}
+
+.groupTab,
+.groupTabActive {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  height: 34px;
+  padding: 0 14px;
+  cursor: pointer;
+  background: white;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.groupTabActive {
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+  border-color: color-mix(in srgb, var(--color-primary) 25%, white);
+}
+
+.groupTab small,
+.groupTabActive small {
+  display: grid;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  background: rgb(49 92 245 / 9%);
+  border-radius: 99px;
+  place-items: center;
+}
+
+.listHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 26px 12px;
+}
+
+.actionError {
+  margin: 0 26px 12px;
+  color: var(--color-danger);
+  font-size: 11px;
+}
+
+.listHeading strong,
+.listHeading span {
+  display: block;
+}
+
+.listHeading strong {
+  margin-bottom: 3px;
+  font-size: 13px;
+}
+
+.listHeading span {
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+
+.createButton,
+.saveButton {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  height: 34px;
+  padding: 0 13px;
+  cursor: pointer;
+  color: white;
+  background: var(--color-primary);
+  border: 0;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.createForm {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0 26px 14px;
+  padding: 16px;
+  background: #f8fafc;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+}
+
+.createForm label {
+  display: grid;
+  gap: 6px;
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+
+.createForm input,
+.createForm select,
+.profileMain input {
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  background: white;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+  color: var(--color-text);
+  font: inherit;
+}
+
+.createForm select:disabled {
+  color: var(--color-text-muted);
+  background: #eef1f5;
+}
+
+.nameField {
+  grid-column: span 2;
+}
+
+.formActions {
+  display: flex;
+  grid-column: 1 / -1;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.formActions button {
+  height: 34px;
+  padding: 0 13px;
+  cursor: pointer;
+  background: white;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.formActions .saveButton {
+  color: white;
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.profileList {
+  display: grid;
+  gap: 8px;
+  padding: 0 26px 26px;
+  overflow-y: auto;
+}
+
+.profileRow {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) auto auto;
+  gap: 13px;
+  align-items: center;
+  min-height: 58px;
+  padding: 9px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 11px;
+}
+
+.orderButtons {
+  display: flex;
+  gap: 3px;
+}
+
+.orderButtons button {
+  width: 23px;
+  height: 27px;
+  cursor: pointer;
+  background: white;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text-muted);
+}
+
+.orderButtons button:disabled {
+  cursor: default;
+  opacity: 0.3;
+}
+
+.profileMain {
+  min-width: 0;
+}
+
+.profileMain strong,
+.profileMain span {
+  display: block;
+}
+
+.profileMain strong {
+  overflow: hidden;
+  margin-bottom: 4px;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profileMain span {
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+
+.activeBadge,
+.inactiveBadge {
+  padding: 4px 8px;
+  border-radius: 99px;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.activeBadge {
+  color: #057a55;
+  background: #e7f8f2;
+}
+
+.inactiveBadge {
+  color: #667085;
+  background: #eef1f5;
+}
+
+.rowActions {
+  display: flex;
+  gap: 5px;
+}
+
+.rowActions button {
+  height: 30px;
+  padding: 0 10px;
+  cursor: pointer;
+  background: white;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+
+.rowActions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}

@@ -1,0 +1,350 @@
+.app {
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) 68px;
+  width: 100%;
+  height: 100%;
+}
+
+.main {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.startupLoading {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  color: var(--color-text-muted);
+  background: #f6f8fb;
+}
+
+.startupFailure {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  padding: 32px;
+  place-items: center;
+  background: #f6f8fb;
+}
+
+.startupFailure section {
+  display: grid;
+  gap: 14px;
+  width: min(560px, 100%);
+  padding: 28px;
+  background: white;
+  border: 1px solid #efcaca;
+  border-radius: 16px;
+  box-shadow: 0 16px 48px rgb(31 51 88 / 10%);
+}
+
+.startupFailure h1,
+.startupFailure p {
+  margin: 0;
+}
+
+.startupFailure code,
+.persistenceError code {
+  overflow-wrap: anywhere;
+  font-family: Consolas, monospace;
+  font-size: 12px;
+}
+
+.startupFailure button,
+.persistenceError button {
+  justify-self: start;
+  min-height: 36px;
+  padding: 0 14px;
+  cursor: pointer;
+  border-radius: 8px;
+  font-weight: 650;
+}
+
+.persistenceError {
+  position: absolute;
+  z-index: 40;
+  top: 0;
+  right: 0;
+  left: 0;
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 18px;
+  color: #7c2626;
+  background: #fff0f0;
+  border-bottom: 1px solid #e9b7b7;
+}
+
+.persistenceError > div {
+  display: grid;
+  gap: 2px;
+}
+
+.persistenceError button {
+  flex: 0 0 auto;
+  color: #7c2626;
+  background: white;
+  border: 1px solid #d99c9c;
+}
+
+.firstRun {
+  grid-row: 1 / -1;
+  min-width: 0;
+  min-height: 0;
+  padding: clamp(20px, 4vw, 48px);
+  overflow: auto;
+  background:
+    radial-gradient(circle at 20% 10%, rgb(65 117 232 / 11%), transparent 34%),
+    linear-gradient(145deg, #f8faff, #f3f6fb);
+}
+
+.firstRunCard {
+  width: min(820px, 100%);
+  margin: 0 auto;
+  padding: clamp(24px, 4vw, 44px);
+  background: rgb(255 255 255 / 94%);
+  border: 1px solid var(--color-border);
+  border-radius: 22px;
+  box-shadow: 0 18px 60px rgb(31 51 88 / 12%);
+}
+
+.firstRunEyebrow {
+  color: var(--color-primary);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.12em;
+}
+
+.firstRunCard h1 {
+  margin: 10px 0 8px;
+  font-size: clamp(24px, 4vw, 34px);
+}
+
+.firstRunCard > p {
+  margin: 0;
+  color: var(--color-text-muted);
+  line-height: 1.65;
+}
+
+.firstRunOptions {
+  display: grid;
+  gap: 14px;
+  margin: 28px 0 18px;
+}
+
+.firstRunOptions article {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 18px;
+  background: #f8faff;
+  border: 1px solid #dfe6f2;
+  border-radius: 14px;
+}
+
+.firstRunOptions article > div:first-child {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.firstRunOptions strong,
+.firstRunOptions small,
+.firstRunOptions code {
+  display: block;
+}
+
+.firstRunOptions small {
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.firstRunOptions code {
+  max-width: 100%;
+  padding: 5px 7px;
+  overflow: hidden;
+  color: #4b5870;
+  background: #edf1f8;
+  border-radius: 6px;
+  font-family: Consolas, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.firstRunOptions button {
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: 0 16px;
+  cursor: pointer;
+  color: white;
+  background: var(--color-primary);
+  border: 0;
+  border-radius: 9px;
+  font-weight: 650;
+}
+
+.firstRunOptions button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.firstRunActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.firstRunNotice {
+  padding: 11px 13px;
+  color: #725b25 !important;
+  background: #fff9e9;
+  border: 1px solid #efe1b8;
+  border-radius: 9px;
+  font-size: 12px;
+}
+
+.firstRunError,
+.firstRunWorking {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  font-size: 12px;
+}
+
+.firstRunError {
+  color: #8a3434;
+  background: #fff1f1;
+  border: 1px solid #efcaca;
+}
+
+.firstRunWorking {
+  color: #35558f;
+  background: #edf4ff;
+  border: 1px solid #cdddf8;
+}
+
+.navigation {
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 24px;
+  background: rgb(255 255 255 / 92%);
+  border-top: 1px solid var(--color-border);
+  box-shadow: 0 -8px 28px rgb(23 32 51 / 4%);
+  backdrop-filter: blur(18px);
+}
+
+.navItems {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  width: max-content;
+  padding: 4px;
+  background: #f3f5f9;
+  border: 1px solid var(--color-border);
+  border-radius: 13px;
+}
+
+.navButton,
+.navActive {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  min-width: 116px;
+  height: 44px;
+  padding: 0 20px;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  color: var(--color-text-muted);
+}
+
+.navButton:hover {
+  background: rgb(255 255 255 / 72%);
+  color: var(--color-text);
+}
+
+.navActive {
+  background: white;
+  color: var(--color-primary);
+  font-weight: 650;
+  box-shadow: 0 1px 3px rgb(23 32 51 / 10%), 0 5px 12px rgb(23 32 51 / 5%);
+}
+.recoveryNotice {
+  position: absolute;
+  z-index: 40;
+  top: 12px;
+  left: 50%;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  width: min(780px, calc(100% - 32px));
+  padding: 10px 12px;
+  color: #8a3434;
+  background: #fff5f5;
+  border: 1px solid #efcaca;
+  border-radius: 10px;
+  box-shadow: var(--shadow-card);
+  transform: translateX(-50%);
+}
+
+.recoveryNotice span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 10px;
+}
+
+.recoveryNotice button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 0 9px;
+  cursor: pointer;
+  background: white;
+  border: 1px solid #dfb8b8;
+  border-radius: 7px;
+  font-size: 9px;
+}
+
+@media (max-width: 760px) {
+  .firstRun {
+    padding: 14px;
+  }
+
+  .firstRunCard {
+    padding: 20px;
+    border-radius: 16px;
+  }
+
+  .firstRunOptions article {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .firstRunActions,
+  .firstRunOptions button {
+    width: 100%;
+  }
+
+  .firstRunActions button {
+    flex: 1;
+  }
+
+  .recoveryNotice {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .recoveryNotice span {
+    flex-basis: calc(100% - 40px);
+  }
+}

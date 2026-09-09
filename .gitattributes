@@ -1,0 +1,10 @@
+# Normalize repository text while preserving Windows-native script endings.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+
+# Binary application and image assets.
+*.png binary
+*.ico binary
+*.icns binary
+*.exe binary
+*.msi binary

@@ -1,0 +1,985 @@
+.page {
+  height: 100%;
+  padding: 28px var(--page-padding-x) 32px;
+  overflow-y: auto;
+  background:
+    radial-gradient(circle at 80% -10%, rgb(49 92 245 / 7%), transparent 30%),
+    var(--color-bg);
+}
+
+.page header {
+  max-width: 1080px;
+  margin: 0 auto 20px;
+}
+
+.page header > span {
+  color: var(--color-primary);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.15em;
+}
+
+.page h1 {
+  margin: 3px 0 4px;
+  font-size: 27px;
+  letter-spacing: -0.025em;
+}
+
+.page header p,
+.cardHeading p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.settingsCard {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 24px;
+  background: white;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+}
+
+.settingsCard + .settingsCard {
+  margin-top: 18px;
+}
+
+.forecastSettings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  padding-top: 22px;
+}
+
+.forecastSettings label {
+  display: grid;
+  gap: 7px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.forecastSettings select,
+.forecastSettings input {
+  height: 38px;
+  padding: 0 11px;
+  color: var(--color-text);
+  background: white;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+}
+
+.forecastSettings p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.locationError {
+  margin-top: 18px;
+  padding: 10px 12px;
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 8%, white);
+  border-radius: 8px;
+  font-size: 10px;
+}
+
+.locationList {
+  padding: 12px 0;
+}
+
+.locationList article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 54px;
+  padding: 0 4px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.locationList strong,
+.locationList small {
+  display: block;
+}
+
+.locationList strong {
+  margin-bottom: 3px;
+  font-size: 11px;
+}
+
+.locationList small {
+  color: var(--color-text-muted);
+  font-size: 9px;
+}
+
+.locationList button,
+.locationForm button {
+  height: 32px;
+  padding: 0 11px;
+  cursor: pointer;
+  background: white;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 7px;
+  font-size: 10px;
+}
+
+.locationActive,
+.locationInactive {
+  padding: 4px 7px;
+  color: var(--color-active);
+  background: color-mix(in srgb, var(--color-active) 10%, white);
+  border-radius: 999px;
+  font-size: 8px;
+}
+
+.locationInactive {
+  color: var(--color-text-muted);
+  background: var(--color-surface-subtle);
+}
+
+.locationForm {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(160px, 1fr) auto auto;
+  gap: 10px;
+  align-items: end;
+  padding-top: 16px;
+}
+
+.locationForm label {
+  display: grid;
+  gap: 6px;
+  color: var(--color-text-muted);
+  font-size: 9px;
+}
+
+.locationForm input {
+  height: 35px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+}
+
+.cardHeading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.cardHeading h2 {
+  margin: 0 0 5px;
+  font-size: 18px;
+}
+
+.cardHeading p {
+  font-size: 12px;
+}
+
+.cardHeading button {
+  height: 35px;
+  padding: 0 13px;
+  cursor: pointer;
+  background: white;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+}
+
+.cardHeading button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.colorGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 24px;
+  padding: 22px 0;
+}
+
+.colorField {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 11px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+}
+
+.colorField:hover {
+  background: var(--color-surface-subtle);
+  border-color: var(--color-border);
+}
+
+.swatch {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  overflow: hidden;
+  border: 3px solid white;
+  border-radius: 11px;
+  box-shadow: 0 0 0 1px var(--color-border-strong);
+}
+
+.swatch input {
+  position: absolute;
+  width: 54px;
+  height: 54px;
+  inset: -8px;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.colorCopy strong,
+.colorCopy small {
+  display: block;
+}
+
+.colorCopy strong {
+  margin-bottom: 3px;
+  font-size: 12px;
+}
+
+.colorCopy small {
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+
+.colorField code {
+  color: var(--color-text-muted);
+  font-family: "Cascadia Code", monospace;
+  font-size: 10px;
+}
+
+.preview {
+  padding: 18px 20px;
+  background: #f8fafc;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+}
+
+.preview > span {
+  display: block;
+  margin-bottom: 12px;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.previewTrack {
+  display: flex;
+  align-items: center;
+  height: 18px;
+}
+
+.previewTrack i {
+  width: 19%;
+  height: 12px;
+}
+
+.previewTrack i:first-child {
+  border-radius: 6px 0 0 6px;
+}
+
+.previewTrack b {
+  width: 24%;
+  height: 0;
+  border-top: 2px dashed;
+}
+
+.previewTrack em {
+  width: 10px;
+  height: 10px;
+  margin-left: -1px;
+  border: 2px solid white;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px currentcolor;
+}
+
+.preview small {
+  display: block;
+  margin-top: 8px;
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+
+/* Settings workspace refresh */
+.page {
+  padding: 24px var(--page-padding-x) 36px;
+  scroll-behavior: smooth;
+}
+
+.pageHeader,
+.settingsLayout {
+  width: min(1160px, 100%);
+  max-width: none;
+  margin-inline: auto;
+}
+
+.pageHeader {
+  margin-bottom: 18px !important;
+}
+
+.eyebrow {
+  display: block;
+  margin-bottom: 3px;
+}
+
+.pageHeader > div {
+  display: flex;
+  gap: 14px;
+  align-items: baseline;
+}
+
+.pageHeader h1 {
+  margin: 0;
+}
+
+.settingsLayout {
+  display: grid;
+  grid-template-columns: 196px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.settingsNav {
+  position: sticky;
+  top: 0;
+  display: grid;
+  gap: 5px;
+  padding: 14px;
+  background: rgb(255 255 255 / 86%);
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(16px);
+}
+
+.settingsNav > span {
+  padding: 4px 8px 8px;
+  color: var(--color-text-muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
+.settingsNav a {
+  display: grid;
+  gap: 3px;
+  padding: 10px 9px;
+  color: var(--color-text);
+  border: 1px solid transparent;
+  border-radius: 9px;
+  text-decoration: none;
+  transition: 140ms ease;
+}
+
+.settingsNav a:hover,
+.settingsNav a:focus-visible {
+  background: var(--color-primary-soft);
+  border-color: color-mix(in srgb, var(--color-primary) 14%, white);
+  outline: 0;
+}
+
+.settingsNav a strong {
+  font-size: 11px;
+  font-weight: 680;
+}
+
+.settingsNav a small,
+.settingsNav p {
+  color: var(--color-text-muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.settingsNav p {
+  margin: 8px 8px 2px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.settingsContent {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.settingsCard {
+  max-width: none;
+  margin: 0;
+  padding: 22px;
+  scroll-margin-top: 18px;
+  border-radius: 15px;
+}
+
+.settingsCard + .settingsCard {
+  margin-top: 0;
+}
+
+.cardHeading {
+  padding-bottom: 17px;
+}
+
+.cardHeading > div > span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--color-primary);
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+}
+
+.cardHeading h2 {
+  margin-bottom: 4px;
+  font-size: 17px;
+}
+
+.cardHeading button,
+.locationActions button,
+.locationFormActions button {
+  height: 34px;
+  padding: 0 12px;
+  cursor: pointer;
+  color: var(--color-text);
+  background: white;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 620;
+}
+
+.cardHeading button:hover:not(:disabled),
+.locationActions button:hover,
+.locationFormActions button:hover {
+  background: var(--color-surface-subtle);
+  border-color: color-mix(in srgb, var(--color-primary) 25%, var(--color-border-strong));
+}
+
+.cardCount {
+  padding: 5px 9px;
+  color: var(--color-text-muted);
+  background: var(--color-surface-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: 99px;
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.preview {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 18px;
+  align-items: center;
+  margin-top: 17px;
+  padding: 14px 16px;
+  background: #f7f9fd;
+  border-radius: 11px;
+}
+
+.previewHeading {
+  display: grid;
+  gap: 3px;
+}
+
+.previewHeading strong {
+  font-size: 11px;
+}
+
+.previewHeading small {
+  margin: 0;
+  font-size: 9px;
+}
+
+.colorGrid {
+  gap: 7px 16px;
+  padding: 15px 0 0;
+}
+
+.colorField {
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 10px;
+  min-width: 0;
+  padding: 9px 10px;
+  cursor: pointer;
+  border-radius: 10px;
+}
+
+.swatch {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+}
+
+.colorCopy {
+  min-width: 0;
+}
+
+.colorCopy strong {
+  font-size: 11px;
+}
+
+.colorCopy small {
+  overflow: hidden;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.colorField code {
+  font-size: 9px;
+}
+
+.forecastSettings {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  padding-top: 17px;
+}
+
+.forecastControls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 13px;
+  align-content: start;
+}
+
+.forecastControls label,
+.locationForm label {
+  display: grid;
+  gap: 7px;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-weight: 620;
+}
+
+.forecastControls select,
+.forecastControls input,
+.locationForm input {
+  width: 100%;
+  height: 39px;
+  padding: 0 11px;
+  color: var(--color-text);
+  background: white;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 9px;
+  font: inherit;
+}
+
+.forecastControls select:focus,
+.forecastControls input:focus,
+.locationForm input:focus {
+  border-color: color-mix(in srgb, var(--color-primary) 48%, white);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 10%, white);
+  outline: 0;
+}
+
+.methodNote {
+  display: grid;
+  align-content: center;
+  padding: 15px 16px;
+  background: var(--color-primary-soft);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 13%, white);
+  border-radius: 11px;
+}
+
+.methodNote span {
+  color: var(--color-primary);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.methodNote strong {
+  margin: 6px 0 5px;
+  font-size: 13px;
+}
+
+.methodNote p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 9px;
+  line-height: 1.65;
+}
+
+.locationError {
+  border: 1px solid color-mix(in srgb, var(--color-danger) 15%, white);
+}
+
+.locationList {
+  display: grid;
+  padding: 9px 0;
+}
+
+.locationList article {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 12px;
+  min-height: 56px;
+  padding: 7px 4px;
+}
+
+.locationInfo {
+  min-width: 0;
+}
+
+.locationInfo strong,
+.locationInfo small {
+  display: block;
+}
+
+.locationInfo strong {
+  margin-bottom: 3px;
+  font-size: 11px;
+}
+
+.locationInfo small {
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.locationActions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.locationActions button {
+  height: 30px;
+  padding-inline: 10px;
+  font-size: 9px;
+}
+
+.deleteLocationWrap {
+  display: inline-flex;
+}
+
+.locationActions .deleteLocationButton,
+.locationActions .confirmDeleteButton {
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 24%, white);
+}
+
+.locationActions .deleteLocationButton:hover:not(:disabled),
+.locationActions .confirmDeleteButton:hover {
+  color: #b92f2f;
+  background: color-mix(in srgb, var(--color-danger) 7%, white);
+  border-color: color-mix(in srgb, var(--color-danger) 32%, white);
+}
+
+.locationActions .deleteLocationButton:disabled {
+  cursor: not-allowed;
+  color: var(--color-text-muted);
+  background: var(--color-surface-subtle);
+  border-color: var(--color-border);
+  opacity: 0.52;
+}
+
+.locationDeleteConfirm {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.locationDeleteConfirm > span {
+  color: var(--color-danger);
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.locationFormPanel {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: 18px;
+  align-items: end;
+  margin-top: 9px;
+  padding: 15px 16px;
+  background: #f7f9fd;
+  border: 1px solid var(--color-border);
+  border-radius: 11px;
+}
+
+.locationFormPanel > div {
+  display: grid;
+  gap: 4px;
+  align-self: center;
+}
+
+.locationFormPanel > div strong {
+  font-size: 11px;
+}
+
+.locationFormPanel > div small {
+  color: var(--color-text-muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.locationForm {
+  grid-template-columns: minmax(150px, 1fr) minmax(150px, 1fr) auto;
+}
+
+.locationFormActions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.locationFormActions .primaryButton {
+  color: white;
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.locationFormActions .primaryButton:hover {
+  color: white;
+  background: #244ee4;
+  border-color: #244ee4;
+}
+
+@media (max-width: 1050px) {
+  .settingsLayout {
+    grid-template-columns: 1fr;
+  }
+
+  .settingsNav {
+    position: static;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .settingsNav > span,
+  .settingsNav p {
+    display: none;
+  }
+
+  .locationFormPanel {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .page {
+    padding-inline: 18px;
+  }
+
+  .pageHeader > div,
+  .preview {
+    display: block;
+  }
+
+  .pageHeader p {
+    margin-top: 3px;
+  }
+
+  .previewTrack {
+    margin-top: 12px;
+  }
+
+  .colorGrid,
+  .forecastSettings,
+  .forecastControls,
+  .locationForm {
+    grid-template-columns: 1fr;
+  }
+
+  .locationList article {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .locationActions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+}
+.dataLocationPanel {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 17px;
+  padding: 13px 14px;
+  background: #f8fafc;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+}
+
+.dataLocationPanel > div:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.dataLocationPanel strong {
+  font-size: 11px;
+}
+
+.dataLocationPanel small,
+.dataLocationHint {
+  color: var(--color-text-muted);
+  font-size: 9px;
+  line-height: 1.55;
+}
+
+.dataLocationPanel code {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--color-text);
+  font-family: "Cascadia Code", monospace;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dataLocationActions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 7px;
+}
+
+.dataLocationHint {
+  margin: 7px 2px 0;
+}
+
+.dataActions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  padding-top: 17px;
+}
+
+.dataActions > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.dataActions strong {
+  font-size: 11px;
+}
+
+.dataActions small {
+  color: var(--color-text-muted);
+  font-size: 9px;
+}
+
+.dataActions button,
+.dataLocationActions button,
+.restoreButton,
+.restoreConfirm button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 0 13px;
+  cursor: pointer;
+  background: white;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 620;
+}
+
+.dataLocationActions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.restoreButton input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.restoreConfirm {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 14px;
+  padding: 13px 14px;
+  background: color-mix(in srgb, var(--color-danger) 6%, white);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 18%, white);
+  border-radius: 10px;
+}
+
+.restoreConfirm strong {
+  font-size: 11px;
+}
+
+.restoreConfirm p {
+  margin: 3px 0 0;
+  color: var(--color-text-muted);
+  font-size: 9px;
+}
+
+.restoreConfirm > div:last-child {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 7px;
+}
+
+.restoreConfirm .confirmRestoreButton {
+  color: white;
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.dataError,
+.dataSuccess,
+.dataWorking {
+  margin-top: 12px;
+  padding: 10px 12px;
+  overflow-wrap: anywhere;
+  border-radius: 8px;
+  font-size: 10px;
+}
+
+.dataError {
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 8%, white);
+}
+
+.dataSuccess {
+  color: #287258;
+  background: #edf8f3;
+}
+
+.dataWorking {
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
+@media (max-width: 760px) {
+  .dataLocationPanel {
+    display: grid;
+  }
+
+  .dataLocationActions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .dataActions {
+    grid-template-columns: 1fr;
+  }
+
+  .dataActions button,
+  .dataLocationActions button,
+  .restoreButton {
+    width: 100%;
+  }
+
+  .restoreConfirm {
+    display: grid;
+  }
+}
