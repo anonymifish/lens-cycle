@@ -146,14 +146,6 @@ it("manages prediction preferences, data location, and the full location lifecyc
   fireEvent.click(screen.getByRole("button", { name: "恢复默认" }));
   await waitFor(() => expect(useTimelineThemeStore.getState().palette.active).toBe(defaultTimelinePalette.active));
 
-  fireEvent.click(screen.getByRole("button", { name: "选择目录" }));
-  expect(await screen.findByText("新位置：D:\\LensCycleData")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "取消" }));
-  fireEvent.click(screen.getByRole("button", { name: "恢复默认位置" }));
-  expect(await screen.findByText("新位置：C:\\Default")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "迁移并重启" }));
-  await waitFor(() => expect(screen.getByText("迁移完成，正在重启应用…")).toBeTruthy());
-
   const office = screen.getByText("办公室").closest("article")!;
   fireEvent.click(office.querySelectorAll("button")[0]!);
   const name = screen.getByLabelText("地点名称") as HTMLInputElement;
@@ -169,6 +161,14 @@ it("manages prediction preferences, data location, and the full location lifecyc
   fireEvent.click(Array.from(updatedSpare.querySelectorAll("button")).find((button) => button.textContent === "删除")!);
   fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
   await waitFor(() => expect(useInventoryStore.getState().locations.some((entry) => entry.id === "spare")).toBe(false));
+
+  fireEvent.click(screen.getByRole("button", { name: "选择目录" }));
+  expect(await screen.findByText("新位置：D:\\LensCycleData")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "取消" }));
+  fireEvent.click(screen.getByRole("button", { name: "恢复默认位置" }));
+  expect(await screen.findByText("新位置：C:\\Default")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "迁移并重启" }));
+  await waitFor(() => expect(screen.getByText("迁移完成，正在重启应用…")).toBeTruthy());
 });
 
 it("creates and restores a verified backup through the settings UI", async () => {
@@ -195,6 +195,25 @@ it("creates and restores a verified backup through the settings UI", async () =>
   fireEvent.change(fileInput, { target: { files: [file] } });
   fireEvent.click(await screen.findByRole("button", { name: "确认恢复" }));
   expect(await screen.findByText("恢复成功，业务数据和偏好设置已更新。")).toBeTruthy();
+});
+
+it("offers an in-app exit that completes the safe SQLite shutdown command", async () => {
+  const commands: string[] = [];
+  setPersistenceCommandAdapterForTests(async <T,>(command: string): Promise<T> => {
+    commands.push(command);
+    if (command === "get_data_location") return {
+      directory: "isolated", defaultDirectory: "isolated", isDefault: true
+    } as T;
+    if (command === "load_preferences") return collectPreferences() as T;
+    if (command === "exit_app") return undefined as T;
+    throw new Error(`Unexpected command ${command}`);
+  });
+  await bootstrapPreferencesPersistence();
+  render(<SettingsPage />);
+
+  fireEvent.click(screen.getByRole("button", { name: "退出应用" }));
+  await waitFor(() => expect(commands).toContain("exit_app"));
+  expect(screen.getByText("正在保存数据并安全关闭数据库…")).toBeTruthy();
 });
 
 it("reports data-location, restore-file, migration, and location-safety failures", async () => {

@@ -51,12 +51,12 @@ beforeEach(() => {
       lotNumber: "LOT-A", manufacturedDate: "2025-01-01", expiryDate: "2028-01-01",
       expectedUsageDays: 365, receivedDate: "2026-01-01", locationId: "home",
       initialUnitQuantity: 2, initialPackageQuantity: 2, initialLooseUnitQuantity: 0,
-      unitsPerPackageAtReceipt: 1, unitPriceMinor: 12000, currency: "CNY"
+      unitsPerPackageAtReceipt: 1, unitPriceMinor: 1_200_000, currency: "CNY"
     }, {
       id: "lot-2", productId: "product-1", internalLotCode: "20260201-1",
       receivedDate: "2026-02-01", locationId: "home", initialUnitQuantity: 3,
       initialPackageQuantity: 3, initialLooseUnitQuantity: 0, unitsPerPackageAtReceipt: 1,
-      unitPriceMinor: 9000, currency: "CNY"
+      unitPriceMinor: 900_000, currency: "CNY"
     }],
     transactions: [
       {
@@ -207,6 +207,7 @@ describe("populated page rendering", () => {
     expect(await screen.findByText("新增品牌 已完成入库")).toBeTruthy();
     expect(useInventoryStore.getState().products).toHaveLength(2);
     expect(useInventoryStore.getState().lots).toHaveLength(3);
+    expect(useInventoryStore.getState().lots.at(-1)?.unitPriceMinor).toBe(885_000);
 
     const productCard = screen.getByText(/新增品牌 · B2/).closest("article")!;
     fireEvent.click(within(productCard).getByRole("button", { name: "编辑" }));
@@ -221,6 +222,7 @@ describe("populated page rendering", () => {
     fireEvent.change(screen.getByLabelText(/平均每.*价格/), { target: { value: "90" } });
     fireEvent.click(screen.getByRole("button", { name: "保存批次" }));
     expect(await screen.findByText("批次信息已更新")).toBeTruthy();
+    expect(useInventoryStore.getState().lots.at(-1)?.unitPriceMinor).toBe(900_000);
 
     lotRow = screen.getByText("NEW-LOT").closest("div")!;
     fireEvent.click(within(lotRow).getByRole("button", { name: "转移" }));
@@ -294,6 +296,7 @@ describe("populated page rendering", () => {
 
     fireEvent.click(screen.getAllByRole("button", { name: "入库" })[0]!);
     form = screen.getByRole("heading", { name: "添加库存批次" }).closest("form")!;
+    fireEvent.change(within(form).getByLabelText(/平均每.*价格/), { target: { value: "1" } });
     fireEvent.submit(form);
     expect(await within(form).findByText("入库失败")).toBeTruthy();
     fireEvent.click(within(form).getByRole("button", { name: "关闭" }));

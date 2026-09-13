@@ -30,11 +30,15 @@ $relativeFrontend = "../artifacts/runs/$RunId/frontend-dist"
 } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $overlay -Encoding utf8
 
 $previousTarget = $env:CARGO_TARGET_DIR
+$previousTemp = $env:TEMP
+$previousTmp = $env:TMP
 $env:CARGO_TARGET_DIR = $cargoTarget
+$env:TEMP = Join-Path $runRoot "temp"
+$env:TMP = $env:TEMP
 Push-Location $workspace
 try {
     Invoke-LoggedNative "isolated frontend build" $log {
-        pnpm exec vite build --outDir $frontendDist --emptyOutDir
+        node node_modules/vite/bin/vite.js build --outDir $frontendDist --emptyOutDir
     }
     Invoke-LoggedNative "Tauri Windows release" $log {
         pnpm tauri build --config $overlay
@@ -42,6 +46,8 @@ try {
 } finally {
     Pop-Location
     $env:CARGO_TARGET_DIR = $previousTarget
+    $env:TEMP = $previousTemp
+    $env:TMP = $previousTmp
 }
 
 $tauriConfig = Get-Content -LiteralPath (Join-Path $workspace "src-tauri\tauri.conf.json") -Raw | ConvertFrom-Json

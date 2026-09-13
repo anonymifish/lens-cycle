@@ -40,7 +40,7 @@ function snapshot(): AppDataSnapshot {
       receivedDate: "2026-08-27",
       locationId: "home",
       initialUnitQuantity: 1,
-      unitPriceMinor: 1000,
+      unitPriceMinor: 123456,
       currency: "CNY"
     }],
     transactions: [{
@@ -65,7 +65,8 @@ describe("data backup files", () => {
     const document = await createBackupDocument(new Date("2026-08-27T10:00:00.000Z"));
     const parsed = await parseBackupText(JSON.stringify(document));
 
-    expect(document.formatVersion).toBe(1);
+    expect(document.formatVersion).toBe(2);
+    expect(document.priceScale).toBe(10_000);
     expect(document.exportedAt).toBe("2026-08-27T10:00:00.000Z");
     expect(document.checksum).toMatch(/^[a-f0-9]{64}$/);
     expect(parsed.data).toEqual(snapshot());
@@ -81,7 +82,7 @@ describe("data backup files", () => {
   it("rejects invalid and future-version files", async () => {
     await expect(parseBackupText("{broken")).rejects.toThrow("不是有效的 JSON");
     await expect(parseBackupText(JSON.stringify({ formatVersion: 99 }))).rejects.toThrow(
-      "仅支持当前备份格式版本"
+      "仅支持备份格式版本 1 或 2"
     );
   });
 
@@ -92,8 +93,28 @@ describe("data backup files", () => {
       data: snapshot()
     };
     await expect(parseBackupText(JSON.stringify(versionZeroBackup))).rejects.toThrow(
-      "仅支持当前备份格式版本"
+      "仅支持备份格式版本 1 或 2"
     );
+  });
+
+  it("upgrades legacy cent-based backup prices without changing their yuan value", async () => {
+    const current = await createBackupDocument(new Date("2026-08-27T10:00:00.000Z"));
+    const legacy = structuredClone(current) as unknown as Record<string, unknown>;
+    legacy.formatVersion = 1;
+    delete legacy.priceScale;
+    const data = legacy.data as AppDataSnapshot;
+    data.lots[0]!.unitPriceMinor = 1234;
+    delete legacy.checksum;
+    const digest = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(JSON.stringify(legacy))
+    );
+    legacy.checksum = [...new Uint8Array(digest)]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+
+    const parsed = await parseBackupText(JSON.stringify(legacy));
+    expect(parsed.data.lots[0]!.unitPriceMinor).toBe(123400);
   });
 
   it("refuses to create a backup from broken business references", async () => {

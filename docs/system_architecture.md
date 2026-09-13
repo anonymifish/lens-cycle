@@ -64,7 +64,9 @@ scripts/                环境、QA、Release 和产物维护
 2. Rust 打开 SQLite，应用迁移并执行 schema/健康检查；
 3. 前端通过 IPC 加载业务快照和偏好，再初始化 Store；
 4. 失败时停留在启动错误页，不进入业务界面；
-5. 关闭窗口前前端 flush 待保存偏好，再由 Rust 退出进程。
+5. 所有正常退出和重启先建立前端写入屏障，等待在途写入并 flush 待保存偏好；
+6. Rust 执行 `wal_checkpoint(TRUNCATE)`，确认非 busy 后从共享状态取出并显式关闭连接；
+7. 保存、checkpoint 或关闭失败时保持窗口和数据库可重试，全部成功后才退出或重启。
 
 单实例插件避免同一用户重复启动多个独立应用实例。正式入口没有浏览器内存或
 `localStorage` 业务回退。
@@ -75,6 +77,8 @@ scripts/                环境、QA、Release 和产物维护
 - `LENS_CYCLE_DATA_DIR` 用于开发和测试时显式指定隔离目录；
 - 可执行 schema 的唯一来源是 `src-tauri/migrations`；
 - 默认启用外键、WAL、`synchronous=FULL`、busy timeout 和启动 `quick_check`；
+- 正常关闭依赖 SQLite checkpoint 与连接关闭清理 WAL/SHM，不直接删除侧车文件；异常终止
+  后在下一次打开数据库时由 SQLite 自动恢复合法 WAL；
 - 备份为带版本和完整性校验的 JSON；
 - 恢复和数据位置移动先建立 staging 数据库并完整回读，再切换当前数据源。
 

@@ -194,6 +194,8 @@ export const useInventoryStore = create<InventoryState>()(
         ) {
           throw new Error("同一产品的系统批号不能重复");
         }
+        if (!Number.isSafeInteger(changes.unitPriceMinor) || changes.unitPriceMinor < 0)
+          throw new Error("单位价格必须是非负数且使用安全整数");
         set((state) => {
           const lot = state.lots.find((item) => item.id === id);
           if (!lot) return state;
@@ -421,8 +423,8 @@ export const useInventoryStore = create<InventoryState>()(
         if (!location) throw new Error("入库地点不可用");
         if (!Number.isInteger(lot.quantity) || lot.quantity <= 0)
           throw new Error("入库数量必须是正整数");
-        if (!Number.isFinite(lot.unitPriceMinor) || lot.unitPriceMinor < 0)
-          throw new Error("单位价格必须是非负数");
+        if (!Number.isSafeInteger(lot.unitPriceMinor) || lot.unitPriceMinor < 0)
+          throw new Error("单位价格必须是非负数且使用安全整数");
         if (
           lot.expectedUsageDays !== undefined &&
           (!Number.isInteger(lot.expectedUsageDays) || lot.expectedUsageDays <= 0)

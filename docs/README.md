@@ -10,7 +10,8 @@
 | 开发环境、本地构建和目录规范 | [development.md](./development.md) |
 | 测试分层、桌面闭环和门禁 | [testing.md](./testing.md) |
 | 当前可公开测试基线 | [test_report.md](./test_report.md) |
-| SQLite 可执行 schema | [`src-tauri/migrations/001_initial.sql`](../src-tauri/migrations/001_initial.sql) |
+| 0.1.2 发布与升级记录 | [release_0.1.2.md](./release_0.1.2.md) |
+| SQLite 可执行 schema | [`src-tauri/migrations`](../src-tauri/migrations) |
 
 需求、设计和测试信息已从旧需求稿、技术指南、手工清单、测试方案和历史执行提示词合并到
 上述文档。机器可读的 169 项验收清单保存在

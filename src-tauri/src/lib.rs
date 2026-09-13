@@ -12,7 +12,10 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{Manager, State};
@@ -22,6 +25,7 @@ const DATABASE_FILE_NAME: &str = "lens-cycle.sqlite3";
 const DATA_LOCATION_CONFIG_FILE: &str = "data-location.json";
 struct StartupNotice(Mutex<Option<String>>);
 struct DatabaseState(Mutex<Option<Database>>);
+struct ShutdownState(AtomicBool);
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -715,14 +719,56 @@ fn initialize_data_location(
     initialize_database_in_directory(&target, &location.default_directory, &location.config_path)
 }
 
+fn close_database_for_shutdown(
+    database: &DatabaseState,
+    shutdown: &ShutdownState,
+) -> Result<(), String> {
+    if shutdown.0.load(Ordering::Acquire) {
+        return Ok(());
+    }
+    let mut guard = database.0.lock().map_err(error_string)?;
+    let Some(current) = guard.as_ref() else {
+        shutdown.0.store(true, Ordering::Release);
+        return Ok(());
+    };
+    current
+        .checkpoint()
+        .map_err(|error| format!("关闭前 WAL checkpoint 失败：{error}"))?;
+    let current = guard
+        .take()
+        .expect("database presence checked while state lock is held");
+    match current.close() {
+        Ok(()) => {
+            shutdown.0.store(true, Ordering::Release);
+            Ok(())
+        }
+        Err(failure) => {
+            let (database, error) = *failure;
+            *guard = Some(database);
+            Err(format!("显式关闭 SQLite 连接失败：{error}"))
+        }
+    }
+}
+
 #[tauri::command]
-fn restart_app(app: tauri::AppHandle) {
+fn restart_app(
+    database: State<'_, DatabaseState>,
+    shutdown: State<'_, ShutdownState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    close_database_for_shutdown(&database, &shutdown)?;
     app.restart();
 }
 
 #[tauri::command]
-fn exit_app(app: tauri::AppHandle) {
+fn exit_app(
+    database: State<'_, DatabaseState>,
+    shutdown: State<'_, ShutdownState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    close_database_for_shutdown(&database, &shutdown)?;
     app.exit(0);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1086,23 +1132,11 @@ fn create_verified_staging_database(
         if staged.load_preferences()?.as_ref() != Some(preferences) {
             return Err("迁移后的偏好设置校验失败".into());
         }
-        staged.checkpoint()?;
-        Ok(())
+        staged.finalize_for_file_move()
     })();
     if let Err(error) = verification {
         let _ = fs::remove_file(&staging);
-        for suffix in ["-wal", "-shm"] {
-            if let Ok(sidecar) = database_sidecar(&staging, suffix) {
-                let _ = fs::remove_file(sidecar);
-            }
-        }
         return Err(error);
-    }
-    for suffix in ["-wal", "-shm"] {
-        let sidecar = database_sidecar(&staging, suffix)?;
-        if sidecar.exists() {
-            fs::remove_file(sidecar).map_err(error_string)?;
-        }
     }
     Ok(staging)
 }
@@ -1136,17 +1170,11 @@ fn initialize_database_in_directory(
         {
             return Err("新数据库种子校验失败".to_string());
         }
-        database.checkpoint()
+        database.finalize_for_file_move()
     })();
     if let Err(error) = initialized {
         let _ = fs::remove_file(&staging);
         return Err(error);
-    }
-    for suffix in ["-wal", "-shm"] {
-        let sidecar = database_sidecar(&staging, suffix)?;
-        if sidecar.exists() {
-            fs::remove_file(sidecar).map_err(error_string)?;
-        }
     }
     fs::rename(&staging, &target_database).map_err(error_string)?;
     let config_result = if paths_equal(target_directory, default_directory) {
@@ -1209,6 +1237,7 @@ pub fn run() {
                 open_database_with_recovery(&current_database).map_err(std::io::Error::other)?;
             let database = Some(database);
             app.manage(DatabaseState(Mutex::new(database)));
+            app.manage(ShutdownState(AtomicBool::new(false)));
             app.manage(StartupNotice(Mutex::new(startup_notice)));
             app.manage(DataLocationState {
                 current_directory: app_data_dir,
@@ -1247,19 +1276,48 @@ pub fn run() {
             restart_app,
             exit_app
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Lens Cycle");
+        .build(tauri::generate_context!())
+        .expect("error while building Lens Cycle")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                let shutdown = app.state::<ShutdownState>();
+                if shutdown.0.load(Ordering::Acquire) {
+                    return;
+                }
+                api.prevent_exit();
+                let database = app.state::<DatabaseState>();
+                match close_database_for_shutdown(&database, &shutdown) {
+                    Ok(()) => app.exit(0),
+                    Err(error) => {
+                        app.dialog()
+                            .message(format!(
+                                "Lens Cycle 无法安全退出，应用将保持打开。\n\n{error}"
+                            ))
+                            .title("数据库收尾失败")
+                            .kind(MessageDialogKind::Error)
+                            .blocking_show();
+                    }
+                }
+            }
+        });
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        initialize_database_in_directory, migrate_database_to_directory, normalize_windows_path,
-        open_database_with_recovery, read_data_location_config, valid_backup_file_name,
-        write_data_location_config, AppDataSnapshot, Database, DATABASE_FILE_NAME,
+        close_database_for_shutdown, initialize_database_in_directory,
+        migrate_database_to_directory, normalize_windows_path, open_database_with_recovery,
+        read_data_location_config, valid_backup_file_name, write_data_location_config,
+        AppDataSnapshot, Database, DatabaseState, ShutdownState, DATABASE_FILE_NAME,
         DATA_LOCATION_CONFIG_FILE,
     };
-    use std::fs;
+    use std::{
+        fs,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Mutex,
+        },
+    };
 
     fn empty_snapshot() -> AppDataSnapshot {
         AppDataSnapshot {
@@ -1282,6 +1340,20 @@ mod tests {
         ));
         assert!(!valid_backup_file_name("../backup.json"));
         assert!(!valid_backup_file_name("lens-cycle-backup-bad/name.json"));
+    }
+
+    #[test]
+    fn shutdown_checkpoint_closes_the_shared_database_idempotently() {
+        let path = crate::test_support::test_directory("shutdown-state").join(DATABASE_FILE_NAME);
+        let database = Database::open(&path).unwrap();
+        database.save(&empty_snapshot()).unwrap();
+        let database = DatabaseState(Mutex::new(Some(database)));
+        let shutdown = ShutdownState(AtomicBool::new(false));
+
+        close_database_for_shutdown(&database, &shutdown).unwrap();
+        assert!(database.0.lock().unwrap().is_none());
+        assert!(shutdown.0.load(Ordering::Acquire));
+        close_database_for_shutdown(&database, &shutdown).unwrap();
     }
 
     #[cfg(windows)]

@@ -24,7 +24,7 @@ function Get-RunRoot {
     }
 
     if ($Create) {
-        foreach ($name in @("data", "logs", "evidence", "reports", "coverage", "frontend-dist", "cargo-target")) {
+        foreach ($name in @("data", "logs", "evidence", "reports", "coverage", "frontend-dist", "cargo-target", "temp")) {
             New-Item -ItemType Directory -Path (Join-Path $runRoot $name) -Force | Out-Null
         }
     } elseif (-not (Test-Path -LiteralPath $runRoot -PathType Container)) {

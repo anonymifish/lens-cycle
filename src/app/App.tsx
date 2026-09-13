@@ -8,8 +8,8 @@ import { Icon } from "../shared/components/Icon";
 import { useTimelineThemeStore } from "../stores/timelineThemeStore";
 import { usePersistenceStatusStore } from "../stores/persistenceStatusStore";
 import { bootstrapDatabasePersistence } from "../features/inventory/databasePersistence";
-import { flushPreferencesSave } from "../features/inventory/preferencesPersistence";
 import { invokePersistence as invoke } from "../features/inventory/persistenceGateway";
+import { requestAppShutdown } from "../features/inventory/appShutdown";
 import styles from "./App.module.css";
 
 type PageId = "timeline" | "inventory" | "statistics" | "settings";
@@ -30,6 +30,7 @@ export function App() {
   const [startupPhase, setStartupPhase] = useState<"loading" | "ready" | "error">("loading");
   const [startupError, setStartupError] = useState<string | null>(null);
   const [startupNotice, setStartupNotice] = useState<string | null>(null);
+  const [shutdownError, setShutdownError] = useState<string | null>(null);
   const palette = useTimelineThemeStore((state) => state.palette);
   const persistencePhase = usePersistenceStatusStore((state) => state.phase);
   const persistenceError = usePersistenceStatusStore((state) => state.error);
@@ -44,7 +45,6 @@ export function App() {
     });
   }, []);
   useEffect(() => {
-    if (startupPhase !== "ready") return;
     let unlisten: (() => void) | undefined;
     let closing = false;
     void getCurrentWindow()
@@ -52,10 +52,11 @@ export function App() {
         event.preventDefault();
         if (closing) return;
         closing = true;
+        setShutdownError(null);
         try {
-          await flushPreferencesSave();
-          await invoke("exit_app");
-        } catch {
+          await requestAppShutdown("exit");
+        } catch (error) {
+          setShutdownError(error instanceof Error ? error.message : String(error));
           closing = false;
         }
       })
@@ -63,7 +64,7 @@ export function App() {
         unlisten = dispose;
       });
     return () => unlisten?.();
-  }, [startupPhase]);
+  }, []);
   const paletteVariables = {
     "--color-active": palette.active,
     "--color-paused": palette.paused,
@@ -77,7 +78,11 @@ export function App() {
   } as CSSProperties;
 
   if (startupPhase === "loading") {
-    return <div className={styles.startupLoading}>正在检查数据位置…</div>;
+    return (
+      <div className={styles.startupLoading}>
+        {shutdownError ? `无法安全退出：${shutdownError}` : "正在检查数据位置…"}
+      </div>
+    );
   }
 
   if (startupPhase === "error") {
@@ -87,6 +92,7 @@ export function App() {
           <h1>无法打开业务数据</h1>
           <p>为避免产生无法保存的数据，应用已停止进入业务界面。</p>
           <code>{startupError}</code>
+          {shutdownError && <code>{shutdownError}</code>}
           <button onClick={() => window.location.reload()} type="button">重新尝试</button>
         </section>
       </div>
@@ -115,6 +121,16 @@ export function App() {
           >
             重新加载数据
           </button>
+        </div>
+      )}
+      {shutdownError && (
+        <div className={styles.persistenceError} role="alert">
+          <div>
+            <strong>无法安全退出</strong>
+            <span>应用保持打开，数据连接尚未被强制中断，可以修正问题后重试。</span>
+            <code>{shutdownError}</code>
+          </div>
+          <button onClick={() => setShutdownError(null)} type="button">关闭提示</button>
         </div>
       )}
       <main className={styles.main}>

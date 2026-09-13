@@ -7,6 +7,7 @@ import type { ItemProfile } from "../catalog/catalog.types";
 import type { TimelineItem } from "../timeline/timeline.types";
 
 const inventoryGroupOrder = ["lenses", "periodic", "consumables"] as const;
+export const unitPriceScale = 10_000;
 
 export function sortProductsByProfileOrder(
   products: Product[],
@@ -404,7 +405,7 @@ export function formatMoney(minor: number, currency = "CNY") {
   return new Intl.NumberFormat("zh-CN", {
     style: "currency",
     currency
-  }).format(minor / 100);
+  }).format(minor / unitPriceScale);
 }
 
 export function formatUnitPrice(minor: number, currency = "CNY") {
@@ -413,9 +414,18 @@ export function formatUnitPrice(minor: number, currency = "CNY") {
     currency,
     minimumFractionDigits: 4,
     maximumFractionDigits: 4
-  }).format(minor / 100);
+  }).format(minor / unitPriceScale);
 }
 
-export function yuanToMinor(yuan: number) {
-  return Math.round(yuan * 10_000) / 100;
+/** Parse a user-entered yuan amount without carrying a floating-point value across persistence. */
+export function yuanTextToMinor(value: string) {
+  const normalized = value.trim();
+  if (!/^\d+(?:\.\d{1,4})?$/.test(normalized))
+    throw new Error("单位价格最多支持 4 位小数");
+  const [yuan = "0", fraction = ""] = normalized.split(".");
+  const scaled = BigInt(yuan) * BigInt(unitPriceScale) +
+    BigInt(fraction.padEnd(4, "0"));
+  if (scaled > BigInt(Number.MAX_SAFE_INTEGER))
+    throw new Error("单位价格超出支持范围");
+  return Number(scaled);
 }

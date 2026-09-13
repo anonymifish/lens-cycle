@@ -9,6 +9,7 @@ import { usePersistenceStatusStore } from "../../stores/persistenceStatusStore";
 import type { AppPreferences } from "./preferencesPersistence";
 import { bootstrapPreferencesPersistence } from "./preferencesPersistence";
 import { batchStoreNotifications } from "../../stores/atomicStore";
+import { requestAppShutdown } from "./appShutdown";
 
 let bootstrapPromise: Promise<void> | null = null;
 
@@ -53,7 +54,7 @@ export function getDataLocation() {
 
 export async function initializeDataLocation(targetDirectory: string) {
   await invoke("initialize_data_location", { targetDirectory });
-  void invoke("restart_app");
+  await requestAppShutdown("restart");
 }
 
 /** Persist first so a failed restore never replaces the currently visible data. */

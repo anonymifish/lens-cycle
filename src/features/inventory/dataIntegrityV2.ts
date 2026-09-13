@@ -173,8 +173,8 @@ export function validateDataIntegrityV2(data: DataIntegrityInput) {
       add("stock_lot", lot.id, "预计到期日期早于生产日期");
     if (!nonNegativeInteger(lot.initialUnitQuantity))
       add("stock_lot", lot.id, "入库基础单位数必须是非负整数");
-    if (!Number.isFinite(lot.unitPriceMinor) || lot.unitPriceMinor < 0)
-      add("stock_lot", lot.id, "单位价格必须是非负数");
+    if (!Number.isSafeInteger(lot.unitPriceMinor) || lot.unitPriceMinor < 0)
+      add("stock_lot", lot.id, "单位价格必须是非负安全整数");
     if (
       lot.expectedUsageDays !== undefined &&
       !positiveInteger(lot.expectedUsageDays)

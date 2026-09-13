@@ -76,6 +76,9 @@ export function assertCurrentAppDataSnapshot(
     throw new Error("用品配置缺少当前格式必需的 baseUnit");
   if (snapshot.products.some((entry) => typeof entry.itemProfileId !== "string"))
     throw new Error("产品缺少当前格式必需的 itemProfileId");
+  if (snapshot.lots.some((entry) =>
+    !Number.isSafeInteger(entry.unitPriceMinor) || entry.unitPriceMinor < 0
+  )) throw new Error("库存批次单位价格必须是非负安全整数");
   if (snapshot.lots.some((entry) => {
     const hasVoidedAt = entry.voidedAt !== undefined;
     const hasVoidingTransaction = entry.voidedByTransactionId !== undefined;

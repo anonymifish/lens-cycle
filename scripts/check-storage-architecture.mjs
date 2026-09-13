@@ -28,9 +28,10 @@ const migrationDirectory = join(workspace, "src-tauri", "migrations");
 const migrations = (await readdir(migrationDirectory))
   .filter((name) => name.endsWith(".sql"))
   .sort();
-if (migrations.length !== 1 || migrations[0] !== "001_initial.sql") {
+const expectedMigrations = ["001_initial.sql", "002_unit_price_precision.sql"];
+if (JSON.stringify(migrations) !== JSON.stringify(expectedMigrations)) {
   failures.push(
-    `current baseline must contain only 001_initial.sql; found ${migrations.join(", ")}`
+    `schema migrations must be append-only and exactly ${expectedMigrations.join(", ")}; found ${migrations.join(", ")}`
   );
 }
 
@@ -84,6 +85,9 @@ const databaseSource = await readFile(
 const productionDatabaseSource = databaseSource.split(
   /\r?\n#\[cfg\(test\)\]\r?\nmod tests/
 )[0];
+if (/remove_file\s*\(\s*&?sidecar/.test(productionDatabaseSource)) {
+  failures.push("production code must not directly delete SQLite WAL/SHM sidecars");
+}
 const inventoryDeletes = productionDatabaseSource.match(/DELETE FROM inventory_transactions/g) ?? [];
 if (
   inventoryDeletes.length !== 1 ||

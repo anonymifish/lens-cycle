@@ -8,6 +8,10 @@ $workspace = Get-WorkspaceRoot
 $runRoot = Get-RunRoot -RunId $RunId -Create
 $coverage = Join-Path $runRoot "coverage"
 $log = Join-Path $runRoot "logs\frontend-gates.log"
+$previousTemp = $env:TEMP
+$previousTmp = $env:TMP
+$env:TEMP = Join-Path $runRoot "temp"
+$env:TMP = $env:TEMP
 
 Push-Location $workspace
 try {
@@ -23,6 +27,8 @@ try {
     Invoke-LoggedNative "storage architecture" $log { pnpm check:storage-architecture }
 } finally {
     Pop-Location
+    $env:TEMP = $previousTemp
+    $env:TMP = $previousTmp
 }
 
 Write-Output "Frontend gates passed. Log: $log"

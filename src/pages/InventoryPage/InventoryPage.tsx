@@ -33,7 +33,7 @@ import {
   productInventoryValueMinor,
   sortProductsByProfileOrder,
   unopenedPackageCount,
-  yuanToMinor
+  yuanTextToMinor
 } from "../../features/inventory/inventory";
 import type { Product } from "../../features/inventory/inventory.types";
 import { createProduct, deleteProduct, moveProduct, updateProduct } from "../../features/inventory/productRepository";
@@ -412,7 +412,7 @@ export function InventoryPage({
             unitsPerPackageAtReceipt: unitsPerPackage
           }
         : {}),
-      unitPriceMinor: Math.max(0, yuanToMinor(Number(formData.get("unitPrice"))))
+      unitPriceMinor: yuanTextToMinor(String(formData.get("unitPrice")))
       }, receivedProduct);
       setDialog(null);
       setStockError(null);
@@ -639,7 +639,7 @@ export function InventoryPage({
               unitsPerPackageAtReceipt
             }
           : {}),
-        unitPriceMinor: Math.max(0, yuanToMinor(Number(formData.get("unitPrice"))))
+        unitPriceMinor: yuanTextToMinor(String(formData.get("unitPrice")))
       });
       setDialog(null);
       setEditingLotId("");
@@ -1475,7 +1475,7 @@ export function InventoryPage({
                 <label>
                   平均每{selectedProduct.baseUnit}价格（元）
                   <input
-                    defaultValue={(editingLot.unitPriceMinor / 100).toFixed(4)}
+                    defaultValue={(editingLot.unitPriceMinor / 10_000).toFixed(4)}
                     min="0"
                     name="unitPrice"
                     required

@@ -17,6 +17,7 @@ $manifest = [ordered]@{
     cargoTargetDirectory = "cargo-target"
     frontendDirectory = "frontend-dist"
     coverageDirectory = "coverage"
+    temporaryDirectory = "temp"
 }
 $manifest | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding utf8
 

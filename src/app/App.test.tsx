@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   bootstrap: vi.fn(),
   invoke: vi.fn(),
   flush: vi.fn(),
+  shutdown: vi.fn(),
   destroy: vi.fn(),
   onClose: vi.fn(),
   dispose: vi.fn()
@@ -18,6 +19,9 @@ vi.mock("../features/inventory/databasePersistence", () => ({
 vi.mock("../features/inventory/persistenceGateway", () => ({ invokePersistence: mocks.invoke }));
 vi.mock("../features/inventory/preferencesPersistence", () => ({
   flushPreferencesSave: mocks.flush
+}));
+vi.mock("../features/inventory/appShutdown", () => ({
+  requestAppShutdown: mocks.shutdown
 }));
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({ onCloseRequested: mocks.onClose, destroy: mocks.destroy })
@@ -44,6 +48,7 @@ beforeEach(() => {
   mocks.invoke.mockResolvedValue(null);
   mocks.onClose.mockResolvedValue(mocks.dispose);
   mocks.flush.mockResolvedValue(undefined);
+  mocks.shutdown.mockResolvedValue(undefined);
   usePersistenceStatusStore.getState().setStatus("sqlite", "ready");
 });
 afterEach(cleanup);
@@ -68,7 +73,7 @@ it("blocks business UI on database startup failure", async () => {
   expect(await screen.findByRole("alert")).toBeTruthy();
   expect(screen.getByText("corrupt SQLite")).toBeTruthy();
   expect(screen.queryByRole("navigation")).toBeNull();
-  expect(mocks.onClose).not.toHaveBeenCalled();
+  expect(mocks.onClose).toHaveBeenCalledOnce();
 });
 
 it("navigates recovery notices to settings and supports all page destinations", async () => {
@@ -100,8 +105,8 @@ it("honors navigation requests emitted by business pages", async () => {
   expect(screen.getByText("inventory-content")).toBeTruthy();
 });
 
-it("keeps the window open when flushing fails and permits retry", async () => {
-  mocks.flush.mockRejectedValueOnce(new Error("locked"));
+it("keeps the window open when safe shutdown fails and permits retry", async () => {
+  mocks.shutdown.mockRejectedValueOnce(new Error("checkpoint locked"));
   render(<App />);
   await waitFor(() => expect(mocks.onClose).toHaveBeenCalledTimes(1));
   const close = mocks.onClose.mock.calls[0]![0] as (event: {
@@ -109,9 +114,9 @@ it("keeps the window open when flushing fails and permits retry", async () => {
   }) => Promise<void>;
   const event = { preventDefault: vi.fn() };
   await close(event);
-  expect(mocks.invoke.mock.calls.some(([command]) => command === "exit_app")).toBe(false);
+  expect(await screen.findByText("无法安全退出")).toBeTruthy();
   await close(event);
-  expect(mocks.invoke.mock.calls.some(([command]) => command === "exit_app")).toBe(true);
+  expect(mocks.shutdown).toHaveBeenLastCalledWith("exit");
   expect(event.preventDefault).toHaveBeenCalledTimes(2);
 });
 
@@ -123,8 +128,8 @@ it("shows non-Error startup failures and offers a retry", async () => {
 });
 
 it("shows persistence failures and prevents duplicate close work", async () => {
-  let finishFlush!: () => void;
-  mocks.flush.mockReturnValue(new Promise<void>((resolve) => { finishFlush = resolve; }));
+  let finishShutdown!: () => void;
+  mocks.shutdown.mockReturnValue(new Promise<void>((resolve) => { finishShutdown = resolve; }));
   const { unmount } = render(<App />);
   await screen.findByText("timeline-content");
   act(() => usePersistenceStatusStore.getState().setStatus("sqlite", "error", "disk full"));
@@ -137,10 +142,10 @@ it("shows persistence failures and prevents duplicate close work", async () => {
   const event = { preventDefault: vi.fn() };
   const first = close(event);
   await close(event);
-  expect(mocks.flush).toHaveBeenCalledTimes(1);
-  finishFlush();
+  expect(mocks.shutdown).toHaveBeenCalledTimes(1);
+  finishShutdown();
   await first;
-  expect(mocks.invoke.mock.calls.filter(([command]) => command === "exit_app")).toHaveLength(1);
+  expect(mocks.shutdown).toHaveBeenCalledWith("exit");
   unmount();
   expect(mocks.dispose).toHaveBeenCalledOnce();
 });

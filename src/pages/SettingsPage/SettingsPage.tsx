@@ -14,6 +14,7 @@ import {
   updateLocation
 } from "../../features/inventory/locationRepository";
 import { exportBackupFile, parseBackupText, restoreBackupText } from "../../features/inventory/dataBackup";
+import { requestAppShutdown } from "../../features/inventory/appShutdown";
 import {
   getDataLocation,
   type DataLocationInfo
@@ -239,12 +240,24 @@ export function SettingsPage() {
         targetDirectory: pendingDataDirectory
       });
       setDataMessage({ kind: "working", text: "迁移完成，正在重启应用…" });
-      void invoke("restart_app");
+      await requestAppShutdown("restart");
     } catch (error) {
       setPendingDataDirectory(null);
       setDataMessage({
         kind: "error",
         text: "数据位置迁移失败，当前数据库未切换：" + String(error)
+      });
+    }
+  }
+
+  async function safelyExitApplication() {
+    setDataMessage({ kind: "working", text: "正在保存数据并安全关闭数据库…" });
+    try {
+      await requestAppShutdown("exit");
+    } catch (error) {
+      setDataMessage({
+        kind: "error",
+        text: error instanceof Error ? error.message : String(error)
       });
     }
   }
@@ -463,6 +476,13 @@ export function SettingsPage() {
                 选择备份恢复
                 <input accept=".json,application/json" onChange={(event) => void selectRestoreFile(event)} type="file" />
               </label>
+            </div>
+            <div className={styles.dataActions}>
+              <div>
+                <strong>安全退出应用</strong>
+                <small>完成待提交保存、WAL checkpoint 和 SQLite 连接关闭后退出。</small>
+              </div>
+              <button onClick={() => void safelyExitApplication()} type="button">退出应用</button>
             </div>
             {pendingRestore && (
               <div className={styles.restoreConfirm} role="alertdialog" aria-labelledby="restore-confirm-title">

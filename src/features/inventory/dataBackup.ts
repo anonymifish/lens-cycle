@@ -9,8 +9,9 @@ import { replacePersistedAppData } from "./databasePersistence";
 import { applyPreferences, collectPreferences } from "./preferencesPersistence";
 import { invokePersistence as invoke } from "./persistenceGateway";
 
-export const backupFormatVersion = 1;
-export const backupAppVersion = "0.1.0";
+export const backupFormatVersion = 2;
+export const backupAppVersion = "0.1.2";
+export const backupPriceScale = 10_000;
 
 const collectionNames = [
   "profiles", "products", "locations", "lots", "transactions",
@@ -26,7 +27,8 @@ export interface BackupPreferences {
 
 export interface BackupDocument {
   format: "lens-cycle-backup";
-  formatVersion: 1;
+  formatVersion: 1 | 2;
+  priceScale?: number;
   appVersion: string;
   exportedAt: string;
   data: AppDataSnapshot;
@@ -85,6 +87,7 @@ export async function createBackupDocument(now = new Date()): Promise<BackupDocu
   const unsigned: Omit<BackupDocument, "checksum"> = {
     format: "lens-cycle-backup",
     formatVersion: backupFormatVersion,
+    priceScale: backupPriceScale,
     appVersion: backupAppVersion,
     exportedAt: now.toISOString(),
     data,
@@ -103,11 +106,13 @@ export async function parseBackupText(text: string) {
   if (!isRecord(value) || !Number.isInteger(value.formatVersion))
     throw new Error("备份文件缺少格式版本");
   const formatVersion = Number(value.formatVersion);
-  if (formatVersion !== backupFormatVersion)
+  if (formatVersion !== 1 && formatVersion !== backupFormatVersion)
     throw new Error(
-      "仅支持当前备份格式版本 " + backupFormatVersion + "，收到 " + formatVersion
+      "仅支持备份格式版本 1 或 " + backupFormatVersion + "，收到 " + formatVersion
     );
   if (value.format !== "lens-cycle-backup") throw new Error("不支持的备份文件格式");
+  if (formatVersion === backupFormatVersion && value.priceScale !== backupPriceScale)
+    throw new Error("备份中的单位价格比例无效");
 
   assertSnapshotShape(value.data);
   const preferences = value.preferences;
@@ -128,8 +133,9 @@ export async function parseBackupText(text: string) {
 
   let data: AppDataSnapshot;
   try {
-    assertCurrentAppDataSnapshot(value.data);
-    data = structuredClone(value.data);
+    data = structuredClone(value.data) as AppDataSnapshot;
+    if (formatVersion === 1) migrateLegacyUnitPrices(data);
+    assertCurrentAppDataSnapshot(data);
     assertValidAppDataSnapshot(data);
   } catch (error) {
     throw new Error(
@@ -137,6 +143,18 @@ export async function parseBackupText(text: string) {
     );
   }
   return { data, preferences };
+}
+
+function migrateLegacyUnitPrices(data: AppDataSnapshot) {
+  for (const lot of data.lots) {
+    const oldMinor = lot.unitPriceMinor;
+    if (!Number.isFinite(oldMinor) || oldMinor < 0)
+      throw new Error("旧版备份包含无效单位价格");
+    const scaled = Math.round(oldMinor * 100);
+    if (!Number.isSafeInteger(scaled))
+      throw new Error("旧版备份单位价格超出支持范围");
+    lot.unitPriceMinor = scaled;
+  }
 }
 
 export async function exportBackupFile() {

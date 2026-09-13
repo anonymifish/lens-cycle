@@ -35,7 +35,7 @@ describe("database persistence orchestration", () => {
     expect(usePersistenceStatusStore.getState().phase).toBe("ready");
   });
 
-  it("initializes a location, restarts, and atomically replaces the visible snapshot", async () => {
+  it("initializes a location and requests a safe restart", async () => {
     const calls: Array<[string, Record<string, unknown> | undefined]> = [];
     setPersistenceCommandAdapterForTests(async <T,>(
       command: string, args?: Record<string, unknown>
@@ -44,10 +44,14 @@ describe("database persistence orchestration", () => {
       return undefined as T;
     });
     await initializeDataLocation("D:\\Data");
-    await replacePersistedAppData(emptySnapshot);
     expect(calls.map(([command]) => command)).toEqual([
-      "initialize_data_location", "restart_app", "replace_app_data"
+      "initialize_data_location", "restart_app"
     ]);
+  });
+
+  it("atomically replaces the visible snapshot", async () => {
+    setPersistenceCommandAdapterForTests(async <T,>(): Promise<T> => undefined as T);
+    await replacePersistedAppData(emptySnapshot);
     expect(collectAppDataSnapshot()).toEqual(emptySnapshot);
   });
 

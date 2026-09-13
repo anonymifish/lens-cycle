@@ -4,8 +4,9 @@ use serde_json::Value;
 use std::{collections::HashSet, path::Path, sync::Mutex};
 
 const MIGRATION_001: &str = include_str!("../migrations/001_initial.sql");
-const MIGRATIONS: &[(i64, &str)] = &[(1, MIGRATION_001)];
-const CURRENT_SCHEMA_GENERATION: &str = "current-1";
+const MIGRATION_002: &str = include_str!("../migrations/002_unit_price_precision.sql");
+const MIGRATIONS: &[(i64, &str)] = &[(1, MIGRATION_001), (2, MIGRATION_002)];
+const CURRENT_SCHEMA_GENERATION: &str = "current-2";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -118,6 +119,7 @@ pub struct StockLot {
     pub initial_loose_unit_quantity: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub units_per_package_at_receipt: Option<i64>,
+    /// Integer ten-thousandths of one yuan (1 CNY = 10,000).
     pub unit_price_minor: i64,
     pub currency: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -832,11 +834,62 @@ impl Database {
     }
 
     pub fn checkpoint(&self) -> Result<(), String> {
-        self.connection
-            .lock()
-            .map_err(error_string)?
-            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
-            .map_err(error_string)
+        let connection = self.connection.lock().map_err(error_string)?;
+        let (busy, _, _) = connection
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })
+            .map_err(error_string)?;
+        if busy != 0 {
+            return Err("SQLite WAL checkpoint 未能取得独占写入机会".into());
+        }
+        Ok(())
+    }
+
+    pub fn close(self) -> Result<(), Box<(Self, String)>> {
+        let connection = match self.connection.into_inner() {
+            Ok(connection) => connection,
+            Err(poisoned) => {
+                return Err(Box::new((
+                    Self {
+                        connection: Mutex::new(poisoned.into_inner()),
+                    },
+                    "SQLite 连接锁已损坏，无法确认数据库关闭".into(),
+                )));
+            }
+        };
+        match connection.close() {
+            Ok(()) => Ok(()),
+            Err((connection, error)) => Err(Box::new((
+                Self {
+                    connection: Mutex::new(connection),
+                },
+                error_string(error),
+            ))),
+        }
+    }
+
+    pub fn finalize_for_file_move(self) -> Result<(), String> {
+        self.checkpoint()?;
+        {
+            let connection = self.connection.lock().map_err(error_string)?;
+            let mode = connection
+                .query_row("PRAGMA journal_mode = DELETE", [], |row| {
+                    row.get::<_, String>(0)
+                })
+                .map_err(error_string)?;
+            if !mode.eq_ignore_ascii_case("delete") {
+                return Err(format!("SQLite 未能结束 staging WAL 模式：{mode}"));
+            }
+        }
+        self.close().map_err(|failure| {
+            let (_, error) = *failure;
+            error
+        })
     }
 }
 
@@ -1244,7 +1297,7 @@ fn void_unused_stock_lot_transaction(
                     initial_package_quantity: row.get(10)?,
                     initial_loose_unit_quantity: row.get(11)?,
                     units_per_package_at_receipt: row.get(12)?,
-                    unit_price_minor: row.get::<_, f64>(13)? as i64,
+                    unit_price_minor: row.get(13)?,
                     currency: row.get(14)?,
                     voided_at: row.get(15)?,
                     voided_by_transaction_id: row.get(16)?,
@@ -2063,13 +2116,19 @@ fn apply_migrations(connection: &mut Connection) -> Result<(), String> {
                     .collect::<rusqlite::Result<Vec<_>>>()
             })
             .map_err(|_| "数据库缺少有效的 schema_migrations 版本表".to_string())?;
-        if generation.as_deref() != Some(CURRENT_SCHEMA_GENERATION) || versions != vec![1] {
+        let supported = matches!(
+            (generation.as_deref(), versions.as_slice()),
+            (Some("current-1"), [1]) | (Some(CURRENT_SCHEMA_GENERATION), [1, 2])
+        );
+        if !supported {
             return Err(format!(
-                "数据库格式不受支持：需要 schema generation {CURRENT_SCHEMA_GENERATION}、版本 [1]，实际为 {:?}、版本 {:?}",
+                "数据库格式不受支持：需要可升级的 current-1/[1] 或 {CURRENT_SCHEMA_GENERATION}/[1, 2]，实际为 {:?}、版本 {:?}",
                 generation, versions
             ));
         }
-        return Ok(());
+        if generation.as_deref() == Some(CURRENT_SCHEMA_GENERATION) {
+            return Ok(());
+        }
     }
     connection
         .execute_batch(
@@ -2090,6 +2149,11 @@ fn apply_migrations(connection: &mut Connection) -> Result<(), String> {
         if applied {
             continue;
         }
+        if *version == 2 {
+            connection
+                .execute_batch("PRAGMA foreign_keys = OFF;")
+                .map_err(error_string)?;
+        }
         let transaction = connection.transaction().map_err(error_string)?;
         transaction.execute_batch(sql).map_err(error_string)?;
         let recorded = transaction
@@ -2108,6 +2172,19 @@ fn apply_migrations(connection: &mut Connection) -> Result<(), String> {
                 .map_err(error_string)?;
         }
         transaction.commit().map_err(error_string)?;
+        if *version == 2 {
+            connection
+                .execute_batch("PRAGMA foreign_keys = ON;")
+                .map_err(error_string)?;
+            let foreign_key_errors = connection
+                .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .map_err(error_string)?;
+            if foreign_key_errors != 0 {
+                return Err("价格精度迁移后外键检查失败".into());
+            }
+        }
     }
     Ok(())
 }
@@ -2132,13 +2209,6 @@ fn required_i64(value: &Value, key: &str) -> Result<i64, String> {
         .get(key)
         .and_then(Value::as_i64)
         .ok_or_else(|| format!("missing integer field: {key}"))
-}
-
-fn required_f64(value: &Value, key: &str) -> Result<f64, String> {
-    value
-        .get(key)
-        .and_then(Value::as_f64)
-        .ok_or_else(|| format!("missing numeric field: {key}"))
 }
 
 fn optional_i64(value: &Value, key: &str) -> Option<i64> {
@@ -2312,7 +2382,7 @@ fn insert_lots(transaction: &Transaction<'_>, values: &[Value]) -> Result<(), St
                 optional_i64(value, "initialPackageQuantity"),
                 optional_i64(value, "initialLooseUnitQuantity"),
                 optional_i64(value, "unitsPerPackageAtReceipt"),
-                required_f64(value, "unitPriceMinor")?,
+                required_i64(value, "unitPriceMinor")?,
                 required_str(value, "currency")?,
                 optional_str(value, "voidedAt"),
                 optional_str(value, "voidedByTransactionId"),
@@ -2768,7 +2838,7 @@ fn load_lots(connection: &Connection) -> Result<Vec<Value>, String> {
                 initial_package_quantity: row.get(10)?,
                 initial_loose_unit_quantity: row.get(11)?,
                 units_per_package_at_receipt: row.get(12)?,
-                unit_price_minor: row.get::<_, f64>(13)? as i64,
+                unit_price_minor: row.get(13)?,
                 currency: row.get(14)?,
                 voided_at: row.get(15)?,
                 voided_by_transaction_id: row.get(16)?,
@@ -3163,6 +3233,121 @@ mod tests {
             database.load().unwrap().unwrap().transactions,
             snapshot.transactions
         );
+    }
+
+    #[test]
+    fn migrates_cent_prices_to_integer_ten_thousandths() {
+        let path =
+            crate::test_support::test_directory("price-migration").join("lens-cycle.sqlite3");
+        let connection = Connection::open(&path).unwrap();
+        connection.execute_batch(MIGRATION_001).unwrap();
+        connection
+            .execute(
+                "INSERT INTO products
+             (id, sequence, item_profile_id, standard_type, brand, base_unit,
+              units_per_package, is_active)
+             VALUES ('old-product', 0, 'plunger-l', 'lens_applicator', '旧数据', '个', 1, 1)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO stock_lots
+             (id, sequence, product_id, location_id, internal_lot_code, received_date,
+              initial_unit_quantity, unit_price_minor, currency)
+             VALUES ('old-lot', 0, 'old-product', 'home', '20260912-1', '2026-09-12',
+                     1, 1234, 'CNY')",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        let database = Database::open(&path).unwrap();
+        let connection = database.connection.lock().unwrap();
+        let (price, storage_type, generation): (i64, String, String) = connection
+            .query_row(
+                "SELECT unit_price_minor, typeof(unit_price_minor),
+                        (SELECT value FROM app_metadata WHERE key='schema_generation')
+                   FROM stock_lots WHERE id='old-lot'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            (price, storage_type.as_str(), generation.as_str()),
+            (123400, "integer", "current-2")
+        );
+    }
+
+    #[test]
+    fn current_price_column_is_integer_only() {
+        let database = Database::in_memory().unwrap();
+        database.save(&valid_snapshot()).unwrap();
+        let connection = database.connection.lock().unwrap();
+        let declared_type = connection
+            .query_row(
+                "SELECT type FROM pragma_table_info('stock_lots') WHERE name='unit_price_minor'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        assert_eq!(declared_type, "INTEGER");
+        assert!(connection
+            .execute(
+                "UPDATE stock_lots SET unit_price_minor=1234.5 WHERE id='lot-1'",
+                [],
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn checkpoint_and_explicit_close_leave_main_database_reopenable() {
+        let directory = crate::test_support::test_directory("explicit-close");
+        let path = directory.join("lens-cycle.sqlite3");
+        let database = Database::open(&path).unwrap();
+        database.save(&valid_snapshot()).unwrap();
+        database.checkpoint().unwrap();
+        database
+            .close()
+            .map_err(|failure| {
+                let (_, error) = *failure;
+                error
+            })
+            .unwrap();
+
+        let wal = directory.join("lens-cycle.sqlite3-wal");
+        assert!(!wal.exists() || std::fs::metadata(&wal).unwrap().len() == 0);
+        let reopened = Database::open(&path).unwrap();
+        assert_eq!(reopened.load().unwrap(), Some(valid_snapshot()));
+    }
+
+    #[test]
+    fn checkpoint_reports_a_busy_reader_instead_of_claiming_success() {
+        let path =
+            crate::test_support::test_directory("checkpoint-busy").join("lens-cycle.sqlite3");
+        let database = Database::open(&path).unwrap();
+        database.save(&valid_snapshot()).unwrap();
+        database
+            .connection
+            .lock()
+            .unwrap()
+            .busy_timeout(std::time::Duration::ZERO)
+            .unwrap();
+
+        let reader = Connection::open(&path).unwrap();
+        reader.execute_batch("BEGIN").unwrap();
+        reader
+            .query_row("SELECT COUNT(*) FROM stock_lots", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        let mut changed = valid_snapshot();
+        changed.products[0]["brand"] = json!("checkpoint 后写入");
+        database.save(&changed).unwrap();
+
+        assert!(database.checkpoint().unwrap_err().contains("未能取得"));
+        reader.execute_batch("ROLLBACK").unwrap();
+        database.checkpoint().unwrap();
     }
 
     #[test]

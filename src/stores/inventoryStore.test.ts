@@ -79,8 +79,8 @@ describe("inventory store invariants", () => {
   });
 
   it("preserves prices with four decimal places in yuan", () => {
-    receive({ unitPriceMinor: 1234.56 });
-    expect(useInventoryStore.getState().lots[0]?.unitPriceMinor).toBe(1234.56);
+    receive({ unitPriceMinor: 123456 });
+    expect(useInventoryStore.getState().lots[0]?.unitPriceMinor).toBe(123456);
   });
 
   it("corrects the original receipt location and its stock-in transaction", () => {

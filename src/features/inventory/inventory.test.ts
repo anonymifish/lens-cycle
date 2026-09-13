@@ -21,7 +21,7 @@ import {
   productInventoryValueMinor,
   sortProductsByProfileOrder,
   unopenedPackageCount,
-  yuanToMinor
+  yuanTextToMinor
 } from "./inventory";
 import type { ItemProfile } from "../catalog/catalog.types";
 import type {
@@ -42,9 +42,20 @@ const product: Product = {
 
 describe("unit prices", () => {
   it("converts and formats yuan prices to four decimal places", () => {
-    const minor = yuanToMinor(12.3456);
-    expect(minor).toBe(1234.56);
+    const minor = yuanTextToMinor("12.3456");
+    expect(minor).toBe(123456);
     expect(formatUnitPrice(minor)).toContain("12.3456");
+  });
+
+  it("parses four decimal places without persisting a floating-point amount", () => {
+    expect(yuanTextToMinor("0")).toBe(0);
+    expect(yuanTextToMinor("12.3456")).toBe(123456);
+    expect(yuanTextToMinor("12.34")).toBe(123400);
+    expect(yuanTextToMinor("12.3400")).toBe(123400);
+    expect(yuanTextToMinor("900719925474.0991")).toBe(Number.MAX_SAFE_INTEGER);
+    expect(() => yuanTextToMinor("12.34567")).toThrow("最多支持 4 位小数");
+    expect(() => yuanTextToMinor("-1")).toThrow("最多支持 4 位小数");
+    expect(() => yuanTextToMinor("900719925474.0992")).toThrow("超出支持范围");
   });
 });
 

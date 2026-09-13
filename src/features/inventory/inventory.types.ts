@@ -38,6 +38,7 @@ export interface StockLot {
   initialPackageQuantity?: number;
   initialLooseUnitQuantity?: number;
   unitsPerPackageAtReceipt?: number;
+  /** Integer ten-thousandths of one yuan (1 CNY = 10,000). */
   unitPriceMinor: number;
   currency: "CNY";
   /** Set when a committed lot was voided through immutable reversal transactions. */
@@ -115,6 +116,7 @@ export interface NewStockLot {
   packageQuantity?: number;
   looseUnitQuantity?: number;
   unitsPerPackageAtReceipt?: number;
+  /** Integer ten-thousandths of one yuan (1 CNY = 10,000). */
   unitPriceMinor: number;
 }
 
@@ -130,5 +132,6 @@ export interface EditableStockLot {
   packageQuantity?: number;
   looseUnitQuantity?: number;
   unitsPerPackageAtReceipt?: number;
+  /** Integer ten-thousandths of one yuan (1 CNY = 10,000). */
   unitPriceMinor: number;
 }
