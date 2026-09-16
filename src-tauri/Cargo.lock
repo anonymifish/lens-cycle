@@ -1947,7 +1947,7 @@ dependencies = [
 
 [[package]]
 name = "lens-cycle"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "rusqlite",
  "serde",

@@ -367,6 +367,9 @@ fn commit_app_data_mutation(
     database: State<'_, DatabaseState>,
     mut mutation: AppDataMutation,
 ) -> Result<(), String> {
+    for product in &mut mutation.upsert_products {
+        *product = normalize_product(product.clone())?;
+    }
     for item in &mut mutation.upsert_items {
         normalize_timeline_item(item)?;
     }

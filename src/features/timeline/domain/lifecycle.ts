@@ -1,8 +1,4 @@
-import {
-  addLocalDays,
-  daysBetween,
-  type LocalDate
-} from "../../../shared/dates/localDate";
+import { addLocalDays, daysBetween, type LocalDate } from "../../../shared/dates/localDate";
 import type { TimelineItem } from "../timeline.types";
 import type { ManagementTemplate } from "../../catalog/catalog.types";
 
@@ -44,20 +40,20 @@ function reopenAuxiliaryIntervals<T extends DatedInterval>(
 }
 
 function intervalsFor(item: TimelineItem): StateInterval[] {
-  return item.stateIntervals?.map((interval) => ({ ...interval })) ?? [
-    {
-      startDate: item.startDate,
-      endDate: item.endDate,
-      status: item.status === "paused" ? "paused" : "active"
-    }
-  ];
+  return (
+    item.stateIntervals?.map((interval) => ({ ...interval })) ?? [
+      {
+        startDate: item.startDate,
+        endDate: item.endDate,
+        status: item.status === "paused" ? "paused" : "active"
+      }
+    ]
+  );
 }
 
 export function timelineItemUsedDays(item: TimelineItem, asOfDate: LocalDate) {
   const lastUsedDate =
-    item.status === "completed" && item.endDate
-      ? addLocalDays(item.endDate, -1)
-      : asOfDate;
+    item.status === "completed" && item.endDate ? addLocalDays(item.endDate, -1) : asOfDate;
   return Math.max(1, daysBetween(item.startDate, lastUsedDate) + 1);
 }
 
@@ -68,12 +64,9 @@ export function timelineItemUsageSummary(
 ): string | null {
   if (
     !template ||
-    ![
-      "rigid_long_term",
-      "lens_accessory",
-      "opened_container",
-      "batch_consumable"
-    ].includes(template)
+    !["rigid_long_term", "lens_accessory", "opened_container", "batch_consumable"].includes(
+      template
+    )
   ) {
     return null;
   }
@@ -92,10 +85,7 @@ export function timelineItemActiveDays(item: TimelineItem, asOfDate: LocalDate) 
     }, 0);
 }
 
-export function replacementCountdownText(
-  predictionDate: LocalDate,
-  asOfDate: LocalDate
-) {
+export function replacementCountdownText(predictionDate: LocalDate, asOfDate: LocalDate) {
   const remainingDays = daysBetween(asOfDate, predictionDate);
   if (remainingDays > 0) return `预计 ${remainingDays} 天后更换`;
   if (remainingDays === 0) return "预计今天更换";
@@ -109,8 +99,7 @@ export function pauseTimelineItem(item: TimelineItem, date: LocalDate) {
   if (!current || current.status !== "active" || current.endDate !== null) {
     throw new Error("当前使用区间不完整");
   }
-  if (date <= current.startDate)
-    throw new Error("暂停日期必须晚于当前使用阶段开始日期");
+  if (date <= current.startDate) throw new Error("暂停日期必须晚于当前使用阶段开始日期");
   current.endDate = date;
   intervals.push({ startDate: date, endDate: null, status: "paused" });
   return { ...item, status: "paused" as const, stateIntervals: intervals };
@@ -139,11 +128,7 @@ export function endTimelineItem(item: TimelineItem, date: LocalDate) {
     throw new Error("结束日期与当前状态区间冲突");
   }
   current.endDate = boundary;
-  const locationIntervals = closeAuxiliaryIntervals(
-    item.locationIntervals,
-    boundary,
-    "地点"
-  );
+  const locationIntervals = closeAuxiliaryIntervals(item.locationIntervals, boundary, "地点");
   const eyeAssignmentIntervals = closeAuxiliaryIntervals(
     item.eyeAssignmentIntervals,
     boundary,
@@ -170,11 +155,7 @@ export function reopenTimelineItem(item: TimelineItem) {
   }
 
   previous.endDate = null;
-  const locationIntervals = reopenAuxiliaryIntervals(
-    item.locationIntervals,
-    item.endDate,
-    "地点"
-  );
+  const locationIntervals = reopenAuxiliaryIntervals(item.locationIntervals, item.endDate, "地点");
   const eyeAssignmentIntervals = reopenAuxiliaryIntervals(
     item.eyeAssignmentIntervals,
     item.endDate,
@@ -233,4 +214,23 @@ export function editPausedInterval(
     ...(isFinalCompletedPause && endDate ? { endDate } : {}),
     stateIntervals: intervals
   };
+}
+
+export function deletePausedInterval(item: TimelineItem, intervalIndex: number) {
+  const intervals = intervalsFor(item);
+  const paused = intervals[intervalIndex];
+  const previous = intervals[intervalIndex - 1];
+  const next = intervals[intervalIndex + 1];
+  if (!paused || paused.status !== "paused" || !previous) {
+    throw new Error("暂停记录不存在");
+  }
+  if (!paused.endDate) {
+    throw new Error("当前暂停阶段不能删除，请先恢复使用");
+  }
+  if (next && next.status !== "active") {
+    throw new Error("暂停记录后的使用阶段不完整");
+  }
+  previous.endDate = next ? next.endDate : paused.endDate;
+  intervals.splice(intervalIndex, next ? 2 : 1);
+  return { ...item, stateIntervals: intervals };
 }

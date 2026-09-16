@@ -52,6 +52,7 @@ describe("shared components", () => {
   it("supports controlled, disabled, read-only, native picker, and picker fallback paths", () => {
     const { rerender, container } = render(<LocalDateInput value="2026-09-06" />);
     const picker = container.querySelector('input[type="date"]') as HTMLInputElement & { showPicker?: () => void };
+    expect(getComputedStyle(picker).pointerEvents).toBe("none");
     picker.showPicker = vi.fn();
     fireEvent.click(screen.getByRole("button", { name: "打开日期选择器" }));
     expect(picker.showPicker).toHaveBeenCalledOnce();

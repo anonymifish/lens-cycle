@@ -1,6 +1,6 @@
 [package]
 name = "lens-cycle"
-version = "0.1.2"
+version = "0.1.4"
 description = "Personal eye-care lifecycle timeline"
 authors = ["Lens Cycle"]
 license = "GPL-3.0-only"

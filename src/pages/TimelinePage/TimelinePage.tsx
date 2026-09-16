@@ -47,13 +47,14 @@ import {
   deleteMistakenTimelineItem,
   reopenDiscardedTimelineItems
 } from "../../features/inventory/dataMutationRepository";
-import { assignLanes } from "../../features/timeline/domain/intervals";
+import { assignGroupedLanes } from "../../features/timeline/domain/intervals";
 import {
   careEventDate,
   careEventLabel,
   careEventState
 } from "../../features/timeline/domain/careEvents";
 import {
+  deletePausedInterval,
   editPausedInterval,
   endTimelineItem,
   pauseTimelineItem,
@@ -74,7 +75,10 @@ import {
   applyLensCaseEyeSwitch,
   lensCasePredictionDate
 } from "../../features/timeline/domain/lensCase";
-import { editTimelineLocationInterval } from "../../features/timeline/domain/locationHistory";
+import {
+  editTimelineLocationInterval,
+  timelineLocationIdAtDate
+} from "../../features/timeline/domain/locationHistory";
 import {
   dateToX,
   panViewport,
@@ -109,10 +113,7 @@ import {
   historicalConsumptionRateMlPerDay,
   inclusiveCycleEndDate
 } from "../../features/timeline/domain/forecast";
-import {
-  LifecycleHistorySection,
-  type LifecycleHistoryEntry
-} from "./LifecycleHistorySection";
+import { LifecycleHistorySection, type LifecycleHistoryEntry } from "./LifecycleHistorySection";
 import styles from "./TimelinePage.module.css";
 
 const LEFT_PANEL_WIDTH = 270;
@@ -126,8 +127,7 @@ function productSummaryName(product: Product) {
 
 function usesPackagedLensInventory(profile?: ItemProfile) {
   return (
-    profile?.managementTemplate === "soft_daily" ||
-    profile?.managementTemplate === "soft_reusable"
+    profile?.managementTemplate === "soft_daily" || profile?.managementTemplate === "soft_reusable"
   );
 }
 
@@ -139,9 +139,7 @@ function initialAddInventorySource(
   items: TimelineItem[]
 ): "package" | "loose" {
   if (!usesPackagedLensInventory(profile) || !lot || !product) return "package";
-  return unopenedPackageCount(lot, product, transactions, items) < 1
-    ? "loose"
-    : "package";
+  return unopenedPackageCount(lot, product, transactions, items) < 1 ? "loose" : "package";
 }
 
 function reusableLensCyclesFor(item: TimelineItem) {
@@ -160,12 +158,9 @@ function eyeUsageTotals(
     const intervalEnd = interval.endDate ?? asOfDate;
     const days = Math.max(
       0,
-      daysBetween(interval.startDate, intervalEnd) +
-        (interval.endDate ? 0 : 1)
+      daysBetween(interval.startDate, intervalEnd) + (interval.endDate ? 0 : 1)
     );
-    interval.eyeSides.forEach((side) =>
-      totals.set(side, (totals.get(side) ?? 0) + days)
-    );
+    interval.eyeSides.forEach((side) => totals.set(side, (totals.get(side) ?? 0) + days));
     return totals;
   }, new Map<EyeSide, number>());
 }
@@ -214,10 +209,7 @@ interface UndoMove {
   oldReusableLensCycles: TimelineItem["reusableLensCycles"];
 }
 
-type CareEventDialog =
-  | { mode: "create" }
-  | { mode: "edit"; eventId: string }
-  | null;
+type CareEventDialog = { mode: "create" } | { mode: "edit"; eventId: string } | null;
 
 type UsageAction = "wear" | "loss" | "dose" | "discard" | null;
 
@@ -246,11 +238,7 @@ function TimelineLegend() {
         {statusMeta.completed}
       </span>
       <span>
-        <svg
-          aria-hidden="true"
-          className={styles.legendLoss}
-          viewBox="-8 -8 16 16"
-        >
+        <svg aria-hidden="true" className={styles.legendLoss} viewBox="-8 -8 16 16">
           <path d="M0-7 5 0 0 7-5 0Z" />
         </svg>
         额外损耗
@@ -282,11 +270,7 @@ function TimelineLegend() {
   );
 }
 
-export function TimelinePage({
-  onNavigateToInventory
-}: {
-  onNavigateToInventory?: () => void;
-}) {
+export function TimelinePage({ onNavigateToInventory }: { onNavigateToInventory?: () => void }) {
   const plotRef = useRef<HTMLDivElement>(null);
   const viewport = useTimelineViewportStore((state) => state.viewport);
   const setViewport = useTimelineViewportStore((state) => state.setViewport);
@@ -304,20 +288,14 @@ export function TimelinePage({
   const careEvents = useTimelineCareEventStore((state) => state.events);
   const addCareEvent = useTimelineCareEventStore((state) => state.addEvent);
   const updateCareEvent = useTimelineCareEventStore((state) => state.updateEvent);
-  const completeCareEvent = useTimelineCareEventStore(
-    (state) => state.completeEvent
-  );
+  const completeCareEvent = useTimelineCareEventStore((state) => state.completeEvent);
   const deleteCareEvent = useTimelineCareEventStore((state) => state.deleteEvent);
   const usageFacts = useUsageFactStore((state) => state.facts);
-  const rescheduleActivation = useInventoryStore(
-    (state) => state.rescheduleActivation
-  );
+  const rescheduleActivation = useInventoryStore((state) => state.rescheduleActivation);
   const consumptionHistoryRange = useForecastSettingsStore(
     (state) => state.consumptionHistoryRange
   );
-  const recentProductCount = useForecastSettingsStore(
-    (state) => state.recentProductCount
-  );
+  const recentProductCount = useForecastSettingsStore((state) => state.recentProductCount);
   const consumptionHistoryScope = useForecastSettingsStore(
     (state) => state.consumptionHistoryScope
   );
@@ -331,25 +309,17 @@ export function TimelinePage({
   const [addProfileId, setAddProfileId] = useState("");
   const [addProductId, setAddProductId] = useState("");
   const [addLotId, setAddLotId] = useState("");
-  const [addDailySource, setAddDailySource] = useState<"package" | "loose">(
-    "package"
-  );
+  const [addDailySource, setAddDailySource] = useState<"package" | "loose">("package");
   const [addStartDate, setAddStartDate] = useState<LocalDate>(todayLocalDate());
-  const [addExpectedEndDate, setAddExpectedEndDate] = useState<LocalDate>(
-    todayLocalDate()
-  );
-  const [addDepletionDate, setAddDepletionDate] = useState<LocalDate>(
-    todayLocalDate()
-  );
+  const [addExpectedEndDate, setAddExpectedEndDate] = useState<LocalDate>(todayLocalDate());
+  const [addDepletionDate, setAddDepletionDate] = useState<LocalDate>(todayLocalDate());
   const [addNotice, setAddNotice] = useState<string | null>(null);
   const [editingDetails, setEditingDetails] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [lifecycleAction, setLifecycleAction] = useState<
     "pause" | "resume" | "end" | "reopen" | "next" | null
   >(null);
-  const [editingPauseIndex, setEditingPauseIndex] = useState<number | null>(
-    null
-  );
+  const [editingPauseIndex, setEditingPauseIndex] = useState<number | null>(null);
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
   const [careEventDialog, setCareEventDialog] = useState<CareEventDialog>(null);
   const [confirmCareEventId, setConfirmCareEventId] = useState<string | null>(null);
@@ -365,18 +335,14 @@ export function TimelinePage({
   const [showAssignmentDialog, setShowAssignmentDialog] = useState(false);
   const [assignmentError, setAssignmentError] = useState<string | null>(null);
   const [editingEyeIntervalIndex, setEditingEyeIntervalIndex] = useState<number | null>(null);
-  const [editingLocationIntervalIndex, setEditingLocationIntervalIndex] = useState<
-    number | null
-  >(null);
-  const [locationHistoryError, setLocationHistoryError] = useState<string | null>(
+  const [editingLocationIntervalIndex, setEditingLocationIntervalIndex] = useState<number | null>(
     null
   );
+  const [locationHistoryError, setLocationHistoryError] = useState<string | null>(null);
   const [editingUsageFactId, setEditingUsageFactId] = useState<string | null>(null);
   const [editingReusableCycleId, setEditingReusableCycleId] = useState<string | null>(null);
   const [reusableCycleError, setReusableCycleError] = useState<string | null>(null);
-  const [usageDefaultDate, setUsageDefaultDate] = useState<LocalDate>(
-    todayLocalDate()
-  );
+  const [usageDefaultDate, setUsageDefaultDate] = useState<LocalDate>(todayLocalDate());
   const [pendingMove, setPendingMove] = useState<PendingMove | null>(null);
   const [undoMove, setUndoMove] = useState<UndoMove | null>(null);
   const [dragPreview, setDragPreview] = useState<{ itemId: string; days: number } | null>(null);
@@ -429,14 +395,8 @@ export function TimelinePage({
           }
         ) ?? fallbackConsumptionRate(product, profile);
       if (!rate) return item;
-      const elapsedCalendarDays = Math.max(
-        0,
-        daysBetween(item.startDate, asOfDate) + 1
-      );
-      const pausedDays = Math.max(
-        0,
-        elapsedCalendarDays - timelineItemActiveDays(item, asOfDate)
-      );
+      const elapsedCalendarDays = Math.max(0, daysBetween(item.startDate, asOfDate) + 1);
+      const pausedDays = Math.max(0, elapsedCalendarDays - timelineItemActiveDays(item, asOfDate));
       const depletionPredictionDate = addLocalDays(
         consumptionPredictionDate(item.startDate, product.capacityMl, rate),
         pausedDays
@@ -477,34 +437,24 @@ export function TimelinePage({
   ]);
   const addProfile = profileById.get(addProfileId);
   const addProducts = addProfile
-    ? products.filter(
-        (product) => productMatchesProfile(product, addProfile)
-      )
+    ? products.filter((product) => productMatchesProfile(product, addProfile))
     : [];
   const selectedAddProduct =
-    addProducts.find((product) => product.id === addProductId) ??
-    addProducts[0];
-  const addBaseUnit =
-    selectedAddProduct?.baseUnit ?? itemProfileBaseUnit(addProfile);
+    addProducts.find((product) => product.id === addProductId) ?? addProducts[0];
+  const addBaseUnit = selectedAddProduct?.baseUnit ?? itemProfileBaseUnit(addProfile);
   const addLots = selectedAddProduct
     ? availableLotsByExpiry(selectedAddProduct, lots, transactions, items)
     : [];
-  const selectedAddLot =
-    addLots.find((lot) => lot.id === addLotId) ?? addLots[0];
+  const selectedAddLot = addLots.find((lot) => lot.id === addLotId) ?? addLots[0];
   const addSourceLocations = selectedAddLot
     ? locations.filter(
         (location) =>
-          location.active &&
-          availableUnitsAtLocation(
-            selectedAddLot,
-            location.id,
-            transactions
-          ) > 0
+          location.active && availableUnitsAtLocation(selectedAddLot, location.id, transactions) > 0
       )
     : [];
   const selectedAddConsumptionRate =
     addProfile?.managementTemplate === "opened_container" && selectedAddProduct
-      ? historicalConsumptionRateMlPerDay(
+      ? (historicalConsumptionRateMlPerDay(
           items,
           profiles,
           {
@@ -518,17 +468,12 @@ export function TimelinePage({
             profileId: addProfile.id,
             productId: selectedAddProduct.id
           }
-        ) ?? fallbackConsumptionRate(selectedAddProduct, addProfile)
+        ) ?? fallbackConsumptionRate(selectedAddProduct, addProfile))
       : null;
   const selectedUsesPackagedLensInventory = usesPackagedLensInventory(addProfile);
   const selectedPackagedUnopenedPackages =
     selectedUsesPackagedLensInventory && selectedAddLot && selectedAddProduct
-      ? unopenedPackageCount(
-          selectedAddLot,
-          selectedAddProduct,
-          transactions,
-          items
-        )
+      ? unopenedPackageCount(selectedAddLot, selectedAddProduct, transactions, items)
       : 0;
   const selectedPackagedLooseUnits =
     selectedUsesPackagedLensInventory && selectedAddLot && selectedAddProduct
@@ -539,12 +484,7 @@ export function TimelinePage({
             transactions,
             items
           )
-        : availableLooseUnitQuantity(
-            selectedAddLot,
-            selectedAddProduct,
-            transactions,
-            items
-          )
+        : availableLooseUnitQuantity(selectedAddLot, selectedAddProduct, transactions, items)
       : 0;
   const addTemplateSupported = Boolean(addProfile);
   const addNeedsExpectedEnd =
@@ -574,10 +514,8 @@ export function TimelinePage({
   const hasUsableInventory = lots.some((lot) => {
     const product = products.find((entry) => entry.id === lot.productId);
     return (
-      Boolean(
-        product &&
-          activeProfiles.some((profile) => profile.id === product.itemProfileId)
-      ) && availableUnits(lot.id, transactions) > 0
+      Boolean(product && activeProfiles.some((profile) => profile.id === product.itemProfileId)) &&
+      availableUnits(lot.id, transactions) > 0
     );
   });
   const hasEmptyFilterResult =
@@ -603,15 +541,9 @@ export function TimelinePage({
       const normalizedQuery = search.trim().toLocaleLowerCase();
       const categories = profiles
         .filter((profile) => profile.groupId === groupId)
-        .filter(
-          (profile) =>
-            profile.active ||
-            items.some((item) => item.categoryId === profile.id)
-        )
+        .filter((profile) => profile.active || items.some((item) => item.categoryId === profile.id))
         .filter((profile) => {
-          const hasMatchingItem = filteredItems.some(
-            (item) => item.categoryId === profile.id
-          );
+          const hasMatchingItem = filteredItems.some((item) => item.categoryId === profile.id);
           const matchesSearch =
             !normalizedQuery ||
             profile.name.toLocaleLowerCase().includes(normalizedQuery) ||
@@ -624,37 +556,45 @@ export function TimelinePage({
       for (const profile of categories) {
         const categoryId = profile.id;
         const categoryItems = filteredItems.filter((item) => item.categoryId === categoryId);
-        const laneLayout = assignLanes(
+        const productOrder = new Map(
+          products
+            .filter((product) => productMatchesProfile(product, profile))
+            .sort(
+              (left, right) =>
+                (left.sortOrder ?? Number.MAX_SAFE_INTEGER) -
+                  (right.sortOrder ?? Number.MAX_SAFE_INTEGER) ||
+                productSummaryName(left).localeCompare(productSummaryName(right)) ||
+                left.id.localeCompare(right.id)
+            )
+            .map((product, index) => [product.id, index])
+        );
+        const laneLayout = assignGroupedLanes(
           categoryItems.map((item) => ({
             instanceId: item.id,
             startDate: item.startDate,
-            endDate: item.endDate
+            endDate: item.endDate,
+            laneGroupId: item.productId ?? item.id,
+            laneGroupOrder:
+              (item.productId ? productOrder.get(item.productId) : undefined) ??
+              Number.MAX_SAFE_INTEGER
           })),
           range.startDate,
           range.endDate
         );
         const laneByItem = new Map(
-          laneLayout.assignments.map((assignment) => [
-            assignment.instanceId,
-            assignment.laneIndex
-          ])
+          laneLayout.assignments.map((assignment) => [assignment.instanceId, assignment.laneIndex])
         );
         const laneCount = Math.max(1, laneLayout.laneCount);
         const profileProductCount = products.filter((product) =>
           productMatchesProfile(product, profile)
         ).length;
         const runningBatchProductCount = new Set(
-          categoryItems
-            .filter((item) => item.status !== "completed")
-            .map((item) => item.productId)
+          categoryItems.filter((item) => item.status !== "completed").map((item) => item.productId)
         ).size;
         const replacementSummaryCount =
           profile.managementTemplate === "rigid_long_term"
-            ? categoryItems.filter(
-                (item) => item.status !== "completed"
-              ).length
-            : profile.managementTemplate === "batch_consumable" &&
-                runningBatchProductCount > 0
+            ? categoryItems.filter((item) => item.status !== "completed").length
+            : profile.managementTemplate === "batch_consumable" && runningBatchProductCount > 0
               ? runningBatchProductCount
               : profileProductCount;
         const contentRows = Math.max(laneCount, replacementSummaryCount, 1);
@@ -691,14 +631,11 @@ export function TimelinePage({
   );
 
   const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
-  const selectedProfile = selectedItem
-    ? profileById.get(selectedItem.categoryId)
-    : undefined;
+  const selectedProfile = selectedItem ? profileById.get(selectedItem.categoryId) : undefined;
   const selectedProduct = selectedItem
     ? products.find((product) => product.id === selectedItem.productId)
     : undefined;
-  const selectedBaseUnit =
-    selectedProduct?.baseUnit ?? itemProfileBaseUnit(selectedProfile);
+  const selectedBaseUnit = selectedProduct?.baseUnit ?? itemProfileBaseUnit(selectedProfile);
   const selectedLot = selectedItem
     ? lots.find((lot) => lot.id === selectedItem.sourceStockLotId)
     : undefined;
@@ -707,15 +644,11 @@ export function TimelinePage({
     : 0;
   const selectedLocationAvailableUnits =
     selectedLot && selectedItem?.locationId
-      ? availableUnitsAtLocation(
-          selectedLot,
-          selectedItem.locationId,
-          transactions
-        )
+      ? availableUnitsAtLocation(selectedLot, selectedItem.locationId, transactions)
       : 0;
   const selectedLocation = selectedItem
-    ? locations.find((location) => location.id === selectedItem.locationId) ??
-      locations.find((location) => location.name === selectedItem.location)
+    ? (locations.find((location) => location.id === selectedItem.locationId) ??
+      locations.find((location) => location.name === selectedItem.location))
     : undefined;
   const selectedCareEvents = selectedItem
     ? careEvents
@@ -729,9 +662,7 @@ export function TimelinePage({
           return aCompleted ? bDate.localeCompare(aDate) : aDate.localeCompare(bDate);
         })
     : [];
-  const visibleCareEvents = showAllCareEvents
-    ? selectedCareEvents
-    : selectedCareEvents.slice(0, 3);
+  const visibleCareEvents = showAllCareEvents ? selectedCareEvents : selectedCareEvents.slice(0, 3);
   const lifecycleHistory: LifecycleHistoryEntry[] = selectedItem
     ? [
         {
@@ -749,10 +680,7 @@ export function TimelinePage({
               pauseIndex: index
             }
           ];
-          if (
-            interval.endDate &&
-            index < (selectedItem.stateIntervals?.length ?? 0) - 1
-          ) {
+          if (interval.endDate && index < (selectedItem.stateIntervals?.length ?? 0) - 1) {
             entries.push({
               date: interval.endDate,
               label: "恢复使用",
@@ -787,31 +715,22 @@ export function TimelinePage({
         .filter((fact) => fact.itemId === selectedItem.id)
         .sort((a, b) => b.date.localeCompare(a.date))
     : [];
-  const visibleUsageFacts = showAllUsageFacts
-    ? selectedUsageFacts
-    : selectedUsageFacts.slice(0, 3);
-  const selectedUsedQuantity = selectedUsageFacts.reduce(
-    (total, fact) => total + fact.quantity,
-    0
-  );
+  const visibleUsageFacts = showAllUsageFacts ? selectedUsageFacts : selectedUsageFacts.slice(0, 3);
+  const selectedUsedQuantity = selectedUsageFacts.reduce((total, fact) => total + fact.quantity, 0);
   const selectedReusableCycles =
     selectedItem && selectedProfile?.managementTemplate === "soft_reusable"
       ? reusableLensCyclesFor(selectedItem)
       : [];
   const selectedReusableCapacity =
     selectedProfile?.managementTemplate === "soft_reusable" && selectedItem
-      ? selectedItem.initialUnitQuantity ??
-        (selectedLot && selectedProduct
-          ? lotUnitsPerPackage(selectedLot, selectedProduct)
-          : 1)
+      ? (selectedItem.initialUnitQuantity ??
+        (selectedLot && selectedProduct ? lotUnitsPerPackage(selectedLot, selectedProduct) : 1))
       : selectedItem?.initialUnitQuantity;
   const selectedReusableLossQuantity = selectedUsageFacts
     .filter((fact) => fact.kind === "extra_loss")
     .reduce((total, fact) => total + fact.quantity, 0);
   const editingReusableCycle = editingReusableCycleId
-    ? selectedReusableCycles.find(
-        (cycle) => cycle.id === editingReusableCycleId
-      )
+    ? selectedReusableCycles.find((cycle) => cycle.id === editingReusableCycleId)
     : undefined;
   const selectedReusableRecords = [
     ...selectedReusableCycles.map((cycle) => ({
@@ -840,17 +759,12 @@ export function TimelinePage({
   const selectedEyeAssignmentIntervals = selectedItem
     ? eyeAssignmentIntervalsFor(selectedItem)
     : [];
-  const selectedEyeSides =
-    selectedEyeAssignmentIntervals.at(-1)?.eyeSides ?? [];
+  const selectedEyeSides = selectedEyeAssignmentIntervals.at(-1)?.eyeSides ?? [];
   const selectedAssignmentUsage = selectedEyeAssignmentIntervals.length
-    ? Array.from(
-        eyeUsageTotals(selectedEyeAssignmentIntervals, todayLocalDate())
-      )
+    ? Array.from(eyeUsageTotals(selectedEyeAssignmentIntervals, todayLocalDate()))
     : [];
   const selectedLensCaseDurationDays =
-    selectedProduct?.defaultDurationDays ??
-    selectedProfile?.defaultDurationDays ??
-    90;
+    selectedProduct?.defaultDurationDays ?? selectedProfile?.defaultDurationDays ?? 90;
   const selectedEyeExpectedDates =
     selectedProfile?.managementTemplate === "lens_case"
       ? selectedEyeSides.map((side) => {
@@ -926,13 +840,9 @@ export function TimelinePage({
 
   function renderCategorySummary(categoryId: string) {
     const profile = profileById.get(categoryId);
-    const categoryItems = filteredItems.filter(
-      (item) => item.categoryId === categoryId
-    );
+    const categoryItems = filteredItems.filter((item) => item.categoryId === categoryId);
     if (profile?.managementTemplate === "rigid_long_term") {
-      const currentItems = categoryItems.filter(
-        (item) => item.status !== "completed"
-      );
+      const currentItems = categoryItems.filter((item) => item.status !== "completed");
       if (currentItems.length === 0) return <small>暂无待更换实例</small>;
       const showNames = currentItems.length > 1;
       return (
@@ -961,7 +871,11 @@ export function TimelinePage({
       }));
       if (stocks.length === 0) return <small>暂无产品库存</small>;
       if (stocks.length === 1) {
-        return <small>剩余 {stocks[0]!.quantity} {stocks[0]!.product.baseUnit}</small>;
+        return (
+          <small>
+            剩余 {stocks[0]!.quantity} {stocks[0]!.product.baseUnit}
+          </small>
+        );
       }
       return (
         <div className={styles.replacementSummaries}>
@@ -974,15 +888,11 @@ export function TimelinePage({
       );
     }
     if (profile?.managementTemplate === "batch_consumable") {
-      const runningItems = categoryItems.filter(
-        (item) => item.status !== "completed"
-      );
+      const runningItems = categoryItems.filter((item) => item.status !== "completed");
       if (runningItems.length > 0) {
         const predictedStocks = profileProducts
           .map((product) => {
-            const productItems = runningItems.filter(
-              (item) => item.productId === product.id
-            );
+            const productItems = runningItems.filter((item) => item.productId === product.id);
             return {
               product,
               quantity: productItems.reduce(
@@ -991,20 +901,19 @@ export function TimelinePage({
                   Math.max(
                     0,
                     (item.initialUnitQuantity ?? 0) -
-                      timelineItemActiveDays(item, todayLocalDate()) *
-                        (item.usageRatePerDay ?? 1)
+                      timelineItemActiveDays(item, todayLocalDate()) * (item.usageRatePerDay ?? 1)
                   ),
                 0
               )
             };
           })
-          .filter(({ product }) =>
-            runningItems.some((item) => item.productId === product.id)
-          );
+          .filter(({ product }) => runningItems.some((item) => item.productId === product.id));
         if (predictedStocks.length === 1) {
           const stock = predictedStocks[0]!;
           return (
-            <small>预计剩余 {Math.round(stock.quantity)} {stock.product.baseUnit}</small>
+            <small>
+              预计剩余 {Math.round(stock.quantity)} {stock.product.baseUnit}
+            </small>
           );
         }
         return (
@@ -1044,7 +953,11 @@ export function TimelinePage({
         quantity: productAvailableUnits(product.id, lots, transactions)
       }));
       if (stocks.length === 1) {
-        return <small>剩余 {stocks[0]!.quantity} {stocks[0]!.product.baseUnit}</small>;
+        return (
+          <small>
+            剩余 {stocks[0]!.quantity} {stocks[0]!.product.baseUnit}
+          </small>
+        );
       }
       return (
         <div className={styles.replacementSummaries}>
@@ -1057,9 +970,7 @@ export function TimelinePage({
       );
     }
     return (
-      <small>
-        {categoryItems.length === 0 ? "暂无记录" : `${categoryItems.length} 个实例`}
-      </small>
+      <small>{categoryItems.length === 0 ? "暂无记录" : `${categoryItems.length} 个实例`}</small>
     );
   }
 
@@ -1132,28 +1043,20 @@ export function TimelinePage({
     };
     try {
       await commitDataMutation(() => {
-        rescheduleActivation(
-          source.id,
-          addLocalDays(source.startDate, pendingMove.days)
-        );
+        rescheduleActivation(source.id, addLocalDays(source.startDate, pendingMove.days));
         setItems((current) =>
           current.map((item) =>
             item.id === pendingMove.itemId
               ? {
                   ...item,
                   startDate: addLocalDays(item.startDate, pendingMove.days),
-                  endDate: item.endDate
-                    ? addLocalDays(item.endDate, pendingMove.days)
-                    : null,
+                  endDate: item.endDate ? addLocalDays(item.endDate, pendingMove.days) : null,
                   ...(item.predictionDate
                     ? { predictionDate: addLocalDays(item.predictionDate, pendingMove.days) }
                     : {}),
                   ...(item.openedExpiryDate
                     ? {
-                        openedExpiryDate: addLocalDays(
-                          item.openedExpiryDate,
-                          pendingMove.days
-                        )
+                        openedExpiryDate: addLocalDays(item.openedExpiryDate, pendingMove.days)
                       }
                     : {}),
                   ...(item.depletionPredictionDate
@@ -1242,8 +1145,7 @@ export function TimelinePage({
                     : {}),
                   ...(undoMove.oldDepletionPredictionDate
                     ? {
-                        depletionPredictionDate:
-                          undoMove.oldDepletionPredictionDate
+                        depletionPredictionDate: undoMove.oldDepletionPredictionDate
                       }
                     : {}),
                   ...(undoMove.oldStateIntervals
@@ -1270,9 +1172,7 @@ export function TimelinePage({
     }
   }
 
-  function openLifecycleAction(
-    action: "pause" | "resume" | "end" | "reopen" | "next"
-  ) {
+  function openLifecycleAction(action: "pause" | "resume" | "end" | "reopen" | "next") {
     setLifecycleAction(action);
     setLifecycleError(null);
   }
@@ -1286,22 +1186,13 @@ export function TimelinePage({
 
     setActionSubmitting(true);
     try {
-      if (
-        lifecycleAction === "end" &&
-        selectedProfile?.managementTemplate === "batch_consumable"
-      ) {
-        const rawActualRemaining = String(
-          formData.get("actualRemainingQuantity") ?? ""
-        );
+      if (lifecycleAction === "end" && selectedProfile?.managementTemplate === "batch_consumable") {
+        const rawActualRemaining = String(formData.get("actualRemainingQuantity") ?? "");
         if (!rawActualRemaining.trim()) {
           throw new Error("请填写实际剩余数量");
         }
         const actualRemainingQuantity = Number(rawActualRemaining);
-        await completeBatchConsumableTimelineItem(
-          selectedItem.id,
-          date,
-          actualRemainingQuantity
-        );
+        await completeBatchConsumableTimelineItem(selectedItem.id, date, actualRemainingQuantity);
         setLifecycleAction(null);
         setLifecycleError(null);
         setActionNotice(
@@ -1309,10 +1200,7 @@ export function TimelinePage({
         );
         return;
       }
-      if (
-        lifecycleAction === "next" &&
-        selectedProfile?.managementTemplate === "soft_reusable"
-      ) {
+      if (lifecycleAction === "next" && selectedProfile?.managementTemplate === "soft_reusable") {
         const sourceStockLotId = selectedItem.sourceStockLotId;
         const cycles = reusableLensCyclesFor(selectedItem);
         if (cycles.some((cycle) => cycle.status === "active")) {
@@ -1326,10 +1214,19 @@ export function TimelinePage({
           throw new Error("下一片启用日期不能早于上一片的实际结束日期");
         }
         const durationDays =
-          products.find((product) => product.id === selectedItem.productId)
-            ?.defaultDurationDays ?? selectedProfile.defaultDurationDays ?? 14;
+          products.find((product) => product.id === selectedItem.productId)?.defaultDurationDays ??
+          selectedProfile.defaultDurationDays ??
+          14;
         const predictionDate = addLocalDays(date, durationDays - 1);
         const newCycleId = `lens-${crypto.randomUUID()}`;
+        const activationLocationId = timelineLocationIdAtDate(selectedItem, date);
+        if (!activationLocationId) throw new Error("无法确定镜片启用地点");
+        if (
+          !selectedLot ||
+          availableUnitsAtLocation(selectedLot, activationLocationId, transactions) < 1
+        ) {
+          throw new Error("启用地点的该批次库存不足");
+        }
         await commitDataMutation(() => {
           useInventoryStore.getState().addTransaction({
             id: `tx-${crypto.randomUUID()}`,
@@ -1337,6 +1234,7 @@ export function TimelinePage({
             occurredDate: date,
             type: "activate",
             quantityDelta: -1,
+            locationId: activationLocationId,
             relatedInstanceId: selectedItem.id,
             relatedCycleId: newCycleId,
             reason: `启用盒内镜片 ${cycles.length + 1}`
@@ -1375,13 +1273,9 @@ export function TimelinePage({
         selectedItem.endReason === "提前结束/丢弃"
       ) {
         const reopened = reopenTimelineItem(selectedItem);
-        const actualEndDate = selectedItem.endDate
-          ? addLocalDays(selectedItem.endDate, -1)
-          : null;
+        const actualEndDate = selectedItem.endDate ? addLocalDays(selectedItem.endDate, -1) : null;
         const discardFact =
-          usageFacts.find(
-            (fact) => fact.id === selectedItem.completionUsageFactId
-          ) ??
+          usageFacts.find((fact) => fact.id === selectedItem.completionUsageFactId) ??
           [...usageFacts]
             .reverse()
             .find(
@@ -1407,11 +1301,7 @@ export function TimelinePage({
             return item;
           })
           .filter((item, index) => item !== items[index]);
-        await reopenDiscardedTimelineItems(
-          discardFact.id,
-          todayLocalDate(),
-          reopenedItems
-        );
+        await reopenDiscardedTimelineItems(discardFact.id, todayLocalDate(), reopenedItems);
         setLifecycleAction(null);
         setLifecycleError(null);
         setActionNotice(`${selectedItem.label} 已撤销丢弃并恢复使用`);
@@ -1425,9 +1315,7 @@ export function TimelinePage({
             lifecycleAction === "end"
           ) {
             const cycles = reusableLensCyclesFor(item);
-            const activeIndex = cycles.findIndex(
-              (cycle) => cycle.status === "active"
-            );
+            const activeIndex = cycles.findIndex((cycle) => cycle.status === "active");
             if (activeIndex < 0) throw new Error("当前没有正在使用的镜片");
             if (date < cycles[activeIndex]!.startDate) {
               throw new Error("结束日期不能早于当前镜片启用日期");
@@ -1460,9 +1348,7 @@ export function TimelinePage({
             const cycles = reusableLensCyclesFor(item);
             const lastIndex = cycles.length - 1;
             const nextCycles = cycles.map((cycle, index) =>
-              index === lastIndex
-                ? { ...cycle, endDate: null, status: "active" as const }
-                : cycle
+              index === lastIndex ? { ...cycle, endDate: null, status: "active" as const } : cycle
             );
             return {
               ...reopened,
@@ -1485,10 +1371,7 @@ export function TimelinePage({
                 ...resumed,
                 ...(resumed.predictionDate
                   ? {
-                      predictionDate: addLocalDays(
-                        resumed.predictionDate,
-                        delayDays
-                      )
+                      predictionDate: addLocalDays(resumed.predictionDate, delayDays)
                     }
                   : {}),
                 ...(resumed.depletionPredictionDate
@@ -1544,42 +1427,34 @@ export function TimelinePage({
     try {
       await commitTimelineItemUpdates((current) =>
         current.map((item) => {
-            if (item.id !== selectedItem.id) return item;
-            const sourcePause = item.stateIntervals?.[editingPauseIndex];
-            const edited = editPausedInterval(
-              item,
-              editingPauseIndex,
-              startDate,
-              endDate
-            );
-            const template = profileById.get(item.categoryId)?.managementTemplate;
-            if (
-              !sourcePause ||
-              (template !== "opened_container" && template !== "batch_consumable")
-            ) {
-              return edited;
-            }
-            const oldPauseDays = daysBetween(
-              sourcePause.startDate,
-              sourcePause.endDate ?? todayLocalDate()
-            );
-            const newPauseDays = daysBetween(startDate, endDate ?? todayLocalDate());
-            const delta = newPauseDays - oldPauseDays;
-            return {
-              ...edited,
-              ...(edited.predictionDate
-                ? { predictionDate: addLocalDays(edited.predictionDate, delta) }
-                : {}),
-              ...(edited.depletionPredictionDate
-                ? {
-                    depletionPredictionDate: addLocalDays(
-                      edited.depletionPredictionDate,
-                      delta
-                    )
-                  }
-                : {})
-            };
-          })
+          if (item.id !== selectedItem.id) return item;
+          const sourcePause = item.stateIntervals?.[editingPauseIndex];
+          const edited = editPausedInterval(item, editingPauseIndex, startDate, endDate);
+          const template = profileById.get(item.categoryId)?.managementTemplate;
+          if (
+            !sourcePause ||
+            (template !== "opened_container" && template !== "batch_consumable")
+          ) {
+            return edited;
+          }
+          const oldPauseDays = daysBetween(
+            sourcePause.startDate,
+            sourcePause.endDate ?? todayLocalDate()
+          );
+          const newPauseDays = daysBetween(startDate, endDate ?? todayLocalDate());
+          const delta = newPauseDays - oldPauseDays;
+          return {
+            ...edited,
+            ...(edited.predictionDate
+              ? { predictionDate: addLocalDays(edited.predictionDate, delta) }
+              : {}),
+            ...(edited.depletionPredictionDate
+              ? {
+                  depletionPredictionDate: addLocalDays(edited.depletionPredictionDate, delta)
+                }
+              : {})
+          };
+        })
       );
       setEditingPauseIndex(null);
       setLifecycleError(null);
@@ -1588,22 +1463,85 @@ export function TimelinePage({
     }
   }
 
+  async function handlePauseDelete(pauseIndex: number) {
+    if (!selectedItem) return;
+    const pause = selectedItem.stateIntervals?.[pauseIndex];
+    if (!pause?.endDate) {
+      setLifecycleError("当前暂停阶段不能删除，请先恢复使用");
+      return;
+    }
+    if (!globalThis.confirm("确定删除这段历史暂停记录吗？相邻的使用阶段将自动合并。")) {
+      return;
+    }
+    setActionSubmitting(true);
+    try {
+      await commitTimelineItemUpdates((current) =>
+        current.map((item) => {
+          if (item.id !== selectedItem.id) return item;
+          const sourcePause = item.stateIntervals?.[pauseIndex];
+          const deleted = deletePausedInterval(item, pauseIndex);
+          const template = profileById.get(item.categoryId)?.managementTemplate;
+          if (
+            !sourcePause?.endDate ||
+            (template !== "opened_container" && template !== "batch_consumable")
+          ) {
+            return deleted;
+          }
+          const removedPauseDays = daysBetween(sourcePause.startDate, sourcePause.endDate);
+          if (template === "opened_container") {
+            const depletionPredictionDate = item.depletionPredictionDate
+              ? addLocalDays(item.depletionPredictionDate, -removedPauseDays)
+              : item.predictionDate
+                ? addLocalDays(item.predictionDate, -removedPauseDays)
+                : undefined;
+            const predictionDate = [depletionPredictionDate, item.openedExpiryDate]
+              .filter((date): date is LocalDate => Boolean(date))
+              .sort()[0];
+            return {
+              ...deleted,
+              ...(depletionPredictionDate ? { depletionPredictionDate } : {}),
+              ...(predictionDate ? { predictionDate } : {})
+            };
+          }
+          return {
+            ...deleted,
+            ...(deleted.predictionDate
+              ? {
+                  predictionDate: addLocalDays(deleted.predictionDate, -removedPauseDays)
+                }
+              : {}),
+            ...(deleted.depletionPredictionDate
+              ? {
+                  depletionPredictionDate: addLocalDays(
+                    deleted.depletionPredictionDate,
+                    -removedPauseDays
+                  )
+                }
+              : {})
+          };
+        })
+      );
+      setLifecycleError(null);
+      setActionNotice("历史暂停记录已删除");
+    } catch (error) {
+      setLifecycleError(error instanceof Error ? error.message : "暂停记录删除失败");
+    } finally {
+      setActionSubmitting(false);
+    }
+  }
+
   async function handleReusableCycleEdit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedItem || !editingReusableCycle) return;
     const formData = new FormData(event.currentTarget);
     const cycles = reusableLensCyclesFor(selectedItem);
-    const cycleIndex = cycles.findIndex(
-      (cycle) => cycle.id === editingReusableCycle.id
-    );
+    const cycleIndex = cycles.findIndex((cycle) => cycle.id === editingReusableCycle.id);
     if (cycleIndex < 0) return;
     const label = String(formData.get("label") || "").trim();
     const startDate = String(formData.get("startDate")) as LocalDate;
     const predictionDate = String(formData.get("predictionDate")) as LocalDate;
     const rawEndDate = String(formData.get("endDate") || "");
-    const endBoundary = rawEndDate
-      ? addLocalDays(rawEndDate as LocalDate, 1)
-      : null;
+    const endBoundary = rawEndDate ? addLocalDays(rawEndDate as LocalDate, 1) : null;
     const previous = cycles[cycleIndex - 1];
     const next = cycles[cycleIndex + 1];
 
@@ -1632,23 +1570,23 @@ export function TimelinePage({
 
       await commitDataMutation(() => {
         if (startDate !== editingReusableCycle.startDate && selectedItem.sourceStockLotId) {
-          const effectiveActivations = effectiveInventoryTransactions(transactions)
-            .filter(
-              (transaction) =>
-                transaction.type === "activate" &&
-                transaction.relatedInstanceId === selectedItem.id
-            );
+          const effectiveActivations = effectiveInventoryTransactions(transactions).filter(
+            (transaction) =>
+              transaction.type === "activate" && transaction.relatedInstanceId === selectedItem.id
+          );
           const original =
             effectiveActivations.find(
               (transaction) => transaction.relatedCycleId === editingReusableCycle.id
             ) ?? effectiveActivations[cycleIndex];
           if (original) {
+            const replacementLocationId = timelineLocationIdAtDate(selectedItem, startDate);
             useInventoryStore.getState().addTransaction({
               id: `tx-${crypto.randomUUID()}`,
               stockLotId: original.stockLotId,
               occurredDate: todayLocalDate(),
               type: "reverse",
               quantityDelta: -original.quantityDelta,
+              ...(original.locationId ? { locationId: original.locationId } : {}),
               relatedInstanceId: selectedItem.id,
               relatedCycleId: editingReusableCycle.id,
               reversedTransactionId: original.id,
@@ -1658,6 +1596,7 @@ export function TimelinePage({
               ...original,
               id: `tx-${crypto.randomUUID()}`,
               occurredDate: startDate,
+              ...(replacementLocationId ? { locationId: replacementLocationId } : {}),
               relatedCycleId: editingReusableCycle.id
             });
           }
@@ -1670,8 +1609,7 @@ export function TimelinePage({
                 label,
                 startDate,
                 predictionDate,
-                endDate:
-                  cycle.status === "completed" ? endBoundary : null
+                endDate: cycle.status === "completed" ? endBoundary : null
               }
             : cycle
         );
@@ -1694,9 +1632,8 @@ export function TimelinePage({
                       : {}),
                     ...(item.locationIntervals
                       ? {
-                          locationIntervals: item.locationIntervals.map(
-                            (interval, index) =>
-                              index === 0 ? { ...interval, startDate } : interval
+                          locationIntervals: item.locationIntervals.map((interval, index) =>
+                            index === 0 ? { ...interval, startDate } : interval
                           )
                         }
                       : {}),
@@ -1710,19 +1647,16 @@ export function TimelinePage({
                       : {})
                   }
                 : {}),
-              ...(editingReusableCycle.status === "active"
-                ? { predictionDate }
-                : {}),
+              ...(editingReusableCycle.status === "active" ? { predictionDate } : {}),
               ...(item.status === "completed" && isLast && endBoundary
                 ? {
                     endDate: endBoundary,
                     ...(item.stateIntervals
                       ? {
-                          stateIntervals: item.stateIntervals.map(
-                            (interval, index, all) =>
-                              index === all.length - 1
-                                ? { ...interval, endDate: endBoundary }
-                                : interval
+                          stateIntervals: item.stateIntervals.map((interval, index, all) =>
+                            index === all.length - 1
+                              ? { ...interval, endDate: endBoundary }
+                              : interval
                           )
                         }
                       : {})
@@ -1736,9 +1670,7 @@ export function TimelinePage({
       setEditingReusableCycleId(null);
       setReusableCycleError(null);
     } catch (error) {
-      setReusableCycleError(
-        error instanceof Error ? error.message : "镜片信息修改失败"
-      );
+      setReusableCycleError(error instanceof Error ? error.message : "镜片信息修改失败");
     }
   }
 
@@ -1757,8 +1689,7 @@ export function TimelinePage({
         setItems((current) =>
           current.map((item) => {
             if (item.id !== selectedItem.id) return item;
-            const reopened =
-              item.status === "completed" ? reopenTimelineItem(item) : item;
+            const reopened = item.status === "completed" ? reopenTimelineItem(item) : item;
             return {
               ...reopened,
               predictionDate: cycle.predictionDate,
@@ -1773,9 +1704,7 @@ export function TimelinePage({
       });
       setReusableCycleError(null);
     } catch (error) {
-      setReusableCycleError(
-        error instanceof Error ? error.message : "撤销镜片结束失败"
-      );
+      setReusableCycleError(error instanceof Error ? error.message : "撤销镜片结束失败");
     }
   }
 
@@ -1786,16 +1715,13 @@ export function TimelinePage({
     if (cycleIndex < 0) return;
 
     try {
-      const effectiveActivations = effectiveInventoryTransactions(transactions)
-        .filter(
-          (transaction) =>
-            transaction.type === "activate" &&
-            transaction.relatedInstanceId === selectedItem.id
-        );
+      const effectiveActivations = effectiveInventoryTransactions(transactions).filter(
+        (transaction) =>
+          transaction.type === "activate" && transaction.relatedInstanceId === selectedItem.id
+      );
       const activation =
-        effectiveActivations.find(
-          (transaction) => transaction.relatedCycleId === cycleId
-        ) ?? effectiveActivations[cycleIndex];
+        effectiveActivations.find((transaction) => transaction.relatedCycleId === cycleId) ??
+        effectiveActivations[cycleIndex];
       if (!activation) {
         throw new Error("没有找到该镜片对应的库存启用记录");
       }
@@ -1806,6 +1732,7 @@ export function TimelinePage({
           occurredDate: todayLocalDate(),
           type: "reverse",
           quantityDelta: -activation.quantityDelta,
+          ...(activation.locationId ? { locationId: activation.locationId } : {}),
           relatedInstanceId: selectedItem.id,
           relatedCycleId: cycleId,
           reversedTransactionId: activation.id,
@@ -1817,8 +1744,7 @@ export function TimelinePage({
         setItems((current) =>
           current.map((item) => {
             if (item.id !== selectedItem.id) return item;
-            const opened =
-              item.status === "completed" ? reopenTimelineItem(item) : item;
+            const opened = item.status === "completed" ? reopenTimelineItem(item) : item;
             const nextItem: TimelineItem = {
               ...opened,
               reusableLensCycles: nextCycles
@@ -1837,9 +1763,7 @@ export function TimelinePage({
       }
       setReusableCycleError(null);
     } catch (error) {
-      setReusableCycleError(
-        error instanceof Error ? error.message : "删除镜片使用失败"
-      );
+      setReusableCycleError(error instanceof Error ? error.message : "删除镜片使用失败");
     }
   }
 
@@ -1876,9 +1800,7 @@ export function TimelinePage({
     }
     const changes = {
       kind,
-      ...(recordType === "completed"
-        ? { completedDate: date }
-        : { plannedDate: date })
+      ...(recordType === "completed" ? { completedDate: date } : { plannedDate: date })
     };
     try {
       await commitDataMutation(() => {
@@ -1893,9 +1815,7 @@ export function TimelinePage({
         }
       });
     } catch (error) {
-      setCareEventError(
-        error instanceof Error ? error.message : "护理事件保存失败"
-      );
+      setCareEventError(error instanceof Error ? error.message : "护理事件保存失败");
       return;
     }
     setCareEventDialog(null);
@@ -1934,9 +1854,7 @@ export function TimelinePage({
         completeCareEvent(confirmingCareEvent.id, completedDate);
       });
     } catch (error) {
-      setCareEventError(
-        error instanceof Error ? error.message : "护理事件确认失败"
-      );
+      setCareEventError(error instanceof Error ? error.message : "护理事件确认失败");
       return;
     }
     setConfirmCareEventId(null);
@@ -1955,9 +1873,7 @@ export function TimelinePage({
       closeItemDetails();
       setActionNotice(`${deletedLabel} 的误录实例已删除，关联库存已同步恢复`);
     } catch (error) {
-      setDeleteItemError(
-        error instanceof Error ? error.message : "删除实例失败"
-      );
+      setDeleteItemError(error instanceof Error ? error.message : "删除实例失败");
     } finally {
       setActionSubmitting(false);
     }
@@ -1965,12 +1881,7 @@ export function TimelinePage({
 
   async function handleUsageAction(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (
-      !selectedItem ||
-      !selectedItem.sourceStockLotId ||
-      !usageAction ||
-      actionSubmitting
-    ) return;
+    if (!selectedItem || !selectedItem.sourceStockLotId || !usageAction || actionSubmitting) return;
     const sourceStockLotId = selectedItem.sourceStockLotId;
     if (selectedItem.status === "completed") {
       setUsageError("已经结束的实例不能继续记录消耗");
@@ -2016,16 +1927,9 @@ export function TimelinePage({
             itemId: selectedItem.id,
             stockLotId: sourceStockLotId,
             date,
-            kind:
-              usageAction === "wear"
-                ? "wear"
-                : usageAction === "dose"
-                  ? "dose"
-                  : "extra_loss",
+            kind: usageAction === "wear" ? "wear" : usageAction === "dose" ? "dose" : "extra_loss",
             quantity: requestedQuantity,
-            ...(selectedItem.locationId
-              ? { locationId: selectedItem.locationId }
-              : {}),
+            ...(selectedItem.locationId ? { locationId: selectedItem.locationId } : {}),
             ...(usageAction === "loss" || usageAction === "discard"
               ? {
                   reason:
@@ -2041,18 +1945,14 @@ export function TimelinePage({
           selectedUsedQuantity + requestedQuantity >= selectedItem.initialUnitQuantity;
         const shouldEndDiscreteLot =
           profile?.managementTemplate === "discrete_dose" &&
-          availableUnits(
-            sourceStockLotId,
-            useInventoryStore.getState().transactions
-          ) === 0;
+          availableUnits(sourceStockLotId, useInventoryStore.getState().transactions) === 0;
         if (shouldEndDaily || shouldEndDiscreteLot || usageAction === "discard") {
           setItems((current) =>
             current.map((item) => {
               const isDiscreteLotItem =
                 profile?.managementTemplate === "discrete_dose" &&
                 item.sourceStockLotId === sourceStockLotId &&
-                profileById.get(item.categoryId)?.managementTemplate ===
-                  "discrete_dose";
+                profileById.get(item.categoryId)?.managementTemplate === "discrete_dose";
               if (
                 (item.id !== selectedItem.id && !isDiscreteLotItem) ||
                 item.status === "completed"
@@ -2118,8 +2018,7 @@ export function TimelinePage({
                 (item.id === selectedItem.id ||
                   (profile.managementTemplate === "discrete_dose" &&
                     item.sourceStockLotId === selectedItem.sourceStockLotId &&
-                    (item.endReason === "库存耗尽自动结束" ||
-                      item.endReason === "提前结束/丢弃")));
+                    (item.endReason === "库存耗尽自动结束" || item.endReason === "提前结束/丢弃")));
               return shouldReopen ? reopenTimelineItem(item) : item;
             })
           );
@@ -2144,10 +2043,7 @@ export function TimelinePage({
     if (
       editingUsageFact.kind === "wear" &&
       selectedUsageFacts.some(
-        (fact) =>
-          fact.id !== editingUsageFact.id &&
-          fact.kind === "wear" &&
-          fact.date === date
+        (fact) => fact.id !== editingUsageFact.id && fact.kind === "wear" && fact.date === date
       )
     ) {
       setUsageError("这一天已经存在正常佩戴记录");
@@ -2155,76 +2051,71 @@ export function TimelinePage({
     }
     try {
       await commitDataMutation(() => {
-      replaceUsageFact(editingUsageFact.id, {
-        date,
-        quantity: editingUsageFact.kind === "extra_loss" ? quantity : 1,
-        ...(editingUsageFact.kind === "extra_loss"
-          ? { reason: String(formData.get("reason") || "").trim() }
-          : {})
-      });
-      if (
-        selectedProfile?.managementTemplate === "soft_daily" &&
-        selectedItem.initialUnitQuantity
-      ) {
-        const nextTotal =
-          selectedUsedQuantity -
-          editingUsageFact.quantity +
-          (editingUsageFact.kind === "extra_loss" ? quantity : 1);
-        const lastDate = selectedUsageFacts
-          .map((fact) => (fact.id === editingUsageFact.id ? date : fact.date))
-          .sort()
-          .at(-1) ?? date;
-        setItems((items) =>
-          items.map((item) => {
-            if (item.id !== selectedItem.id) return item;
-            const openItem =
-              item.status === "completed" ? reopenTimelineItem(item) : item;
-            return nextTotal >= selectedItem.initialUnitQuantity!
-              ? endTimelineItem(openItem, lastDate)
-              : openItem;
-          })
-        );
-      }
-      if (
-        selectedProfile?.managementTemplate === "discrete_dose" &&
-        selectedItem.sourceStockLotId
-      ) {
-        const lotId = selectedItem.sourceStockLotId;
-        const lotIsEmpty =
-          availableUnits(lotId, useInventoryStore.getState().transactions) === 0;
-        const lastFactDate = useUsageFactStore
-          .getState()
-          .facts.filter((fact) => fact.stockLotId === lotId)
-          .map((fact) => fact.date)
-          .sort()
-          .at(-1) ?? date;
-        setItems((items) =>
-          items.map((item) => {
-            if (
-              item.sourceStockLotId !== lotId ||
-              profileById.get(item.categoryId)?.managementTemplate !==
-                "discrete_dose"
-            ) {
-              return item;
-            }
-            if (!lotIsEmpty) {
-              return item.status === "completed" ? reopenTimelineItem(item) : item;
-            }
-            const openItem =
-              item.status === "completed" ? reopenTimelineItem(item) : item;
-            return {
-              ...endTimelineItem(
-                openItem,
-                lastFactDate < item.startDate ? item.startDate : lastFactDate
-              ),
-              endReason:
-                item.endReason === "提前结束/丢弃"
-                  ? "提前结束/丢弃"
-                  : "库存耗尽自动结束"
-            };
-          })
-        );
-      }
+        replaceUsageFact(editingUsageFact.id, {
+          date,
+          quantity: editingUsageFact.kind === "extra_loss" ? quantity : 1,
+          ...(editingUsageFact.kind === "extra_loss"
+            ? { reason: String(formData.get("reason") || "").trim() }
+            : {})
+        });
+        if (
+          selectedProfile?.managementTemplate === "soft_daily" &&
+          selectedItem.initialUnitQuantity
+        ) {
+          const nextTotal =
+            selectedUsedQuantity -
+            editingUsageFact.quantity +
+            (editingUsageFact.kind === "extra_loss" ? quantity : 1);
+          const lastDate =
+            selectedUsageFacts
+              .map((fact) => (fact.id === editingUsageFact.id ? date : fact.date))
+              .sort()
+              .at(-1) ?? date;
+          setItems((items) =>
+            items.map((item) => {
+              if (item.id !== selectedItem.id) return item;
+              const openItem = item.status === "completed" ? reopenTimelineItem(item) : item;
+              return nextTotal >= selectedItem.initialUnitQuantity!
+                ? endTimelineItem(openItem, lastDate)
+                : openItem;
+            })
+          );
+        }
+        if (
+          selectedProfile?.managementTemplate === "discrete_dose" &&
+          selectedItem.sourceStockLotId
+        ) {
+          const lotId = selectedItem.sourceStockLotId;
+          const lotIsEmpty = availableUnits(lotId, useInventoryStore.getState().transactions) === 0;
+          const lastFactDate =
+            useUsageFactStore
+              .getState()
+              .facts.filter((fact) => fact.stockLotId === lotId)
+              .map((fact) => fact.date)
+              .sort()
+              .at(-1) ?? date;
+          setItems((items) =>
+            items.map((item) => {
+              if (
+                item.sourceStockLotId !== lotId ||
+                profileById.get(item.categoryId)?.managementTemplate !== "discrete_dose"
+              ) {
+                return item;
+              }
+              if (!lotIsEmpty) {
+                return item.status === "completed" ? reopenTimelineItem(item) : item;
+              }
+              const openItem = item.status === "completed" ? reopenTimelineItem(item) : item;
+              return {
+                ...endTimelineItem(
+                  openItem,
+                  lastFactDate < item.startDate ? item.startDate : lastFactDate
+                ),
+                endReason: item.endReason === "提前结束/丢弃" ? "提前结束/丢弃" : "库存耗尽自动结束"
+              };
+            })
+          );
+        }
       });
       setEditingUsageFactId(null);
       setUsageError(null);
@@ -2266,20 +2157,14 @@ export function TimelinePage({
     const totals = nextIntervals.reduce((usage, interval) => {
       const intervalEnd = interval.endDate ?? date;
       const days = Math.max(0, daysBetween(interval.startDate, intervalEnd));
-      interval.eyeSides.forEach((eyeSide) =>
-        usage.set(eyeSide, (usage.get(eyeSide) ?? 0) + days)
-      );
+      interval.eyeSides.forEach((eyeSide) => usage.set(eyeSide, (usage.get(eyeSide) ?? 0) + days));
       return usage;
     }, new Map<string, number>());
     const durationDays =
       selectedProduct?.defaultDurationDays ?? selectedProfile?.defaultDurationDays ?? 90;
     const remainingDays = Math.max(
       1,
-      Math.min(
-        ...eyeSides.map((eyeSide) =>
-          Math.max(0, durationDays - (totals.get(eyeSide) ?? 0))
-        )
-      )
+      Math.min(...eyeSides.map((eyeSide) => Math.max(0, durationDays - (totals.get(eyeSide) ?? 0))))
     );
     try {
       await commitDataMutation(() => {
@@ -2314,9 +2199,7 @@ export function TimelinePage({
     const formData = new FormData(event.currentTarget);
     const startDate = String(formData.get("startDate")) as LocalDate;
     const rawEndDate = String(formData.get("endDate") || "");
-    const endDate = rawEndDate
-      ? addLocalDays(rawEndDate as LocalDate, 1)
-      : null;
+    const endDate = rawEndDate ? addLocalDays(rawEndDate as LocalDate, 1) : null;
     const eyeSides = formData
       .getAll("eyeSides")
       .map(String)
@@ -2362,16 +2245,12 @@ export function TimelinePage({
     };
     const currentEyeSides = intervals.at(-1)?.eyeSides ?? [];
     const durationDays =
-      selectedProduct?.defaultDurationDays ??
-      selectedProfile?.defaultDurationDays ??
-      90;
+      selectedProduct?.defaultDurationDays ?? selectedProfile?.defaultDurationDays ?? 90;
     const totals = eyeUsageTotals(intervals, todayLocalDate());
     const remainingDays = Math.max(
       0,
       Math.min(
-        ...currentEyeSides.map((side) =>
-          Math.max(0, durationDays - (totals.get(side) ?? 0))
-        )
+        ...currentEyeSides.map((side) => Math.max(0, durationDays - (totals.get(side) ?? 0)))
       )
     );
     try {
@@ -2385,10 +2264,7 @@ export function TimelinePage({
               eyeAssignmentIntervals: intervals,
               ...(item.status !== "completed" && currentEyeSides.length
                 ? {
-                    predictionDate: addLocalDays(
-                      todayLocalDate(),
-                      remainingDays
-                    )
+                    predictionDate: addLocalDays(todayLocalDate(), remainingDays)
                   }
                 : {})
             };
@@ -2397,9 +2273,7 @@ export function TimelinePage({
         );
       });
     } catch (error) {
-      setAssignmentError(
-        error instanceof Error ? error.message : "眼别记录保存失败"
-      );
+      setAssignmentError(error instanceof Error ? error.message : "眼别记录保存失败");
       return;
     }
     setEditingEyeIntervalIndex(null);
@@ -2436,9 +2310,7 @@ export function TimelinePage({
       setEditingLocationIntervalIndex(null);
       setLocationHistoryError(null);
     } catch (error) {
-      setLocationHistoryError(
-        error instanceof Error ? error.message : "保存地点历史失败"
-      );
+      setLocationHistoryError(error instanceof Error ? error.message : "保存地点历史失败");
     }
   }
 
@@ -2495,9 +2367,7 @@ export function TimelinePage({
     const label = String(formData.get("label")).trim();
     const startDate = String(formData.get("startDate")) as LocalDate;
     const predictionDate = String(formData.get("predictionDate") || "") as LocalDate;
-    const openedExpiryDate = String(
-      formData.get("openedExpiryDate") || ""
-    ) as LocalDate;
+    const openedExpiryDate = String(formData.get("openedExpiryDate") || "") as LocalDate;
     const usageRatePerDay = Number(formData.get("usageRatePerDay") || 0);
     const locationId = String(formData.get("locationId"));
     const location = locations.find((item) => item.id === locationId);
@@ -2514,9 +2384,7 @@ export function TimelinePage({
       setDetailError("开封失效日期不能早于启用日期");
       return;
     }
-    if (
-      selectedUsageFacts.some((fact) => fact.date < startDate)
-    ) {
+    if (selectedUsageFacts.some((fact) => fact.date < startDate)) {
       setDetailError("启用日期不能晚于已有的使用或损耗记录");
       return;
     }
@@ -2544,26 +2412,21 @@ export function TimelinePage({
       return;
     }
 
-    const adjustedStateIntervals = selectedItem.stateIntervals?.map(
-      (interval, index) =>
-        index === 0 ? { ...interval, startDate } : { ...interval }
+    const adjustedStateIntervals = selectedItem.stateIntervals?.map((interval, index) =>
+      index === 0 ? { ...interval, startDate } : { ...interval }
     );
     const adjustedItem = {
       ...selectedItem,
       startDate,
       ...(adjustedStateIntervals ? { stateIntervals: adjustedStateIntervals } : {})
     };
-    const elapsedCalendarDays = Math.max(
-      0,
-      daysBetween(startDate, todayLocalDate()) + 1
-    );
+    const elapsedCalendarDays = Math.max(0, daysBetween(startDate, todayLocalDate()) + 1);
     const pausedDays = Math.max(
       0,
       elapsedCalendarDays - timelineItemActiveDays(adjustedItem, todayLocalDate())
     );
     const recalculatedBatchPredictionDate =
-      selectedProfile?.managementTemplate === "batch_consumable" &&
-      usageRatePerDay > 0
+      selectedProfile?.managementTemplate === "batch_consumable" && usageRatePerDay > 0
         ? batchConsumptionPredictionDate(
             startDate,
             selectedItem.initialUnitQuantity ?? 0,
@@ -2571,11 +2434,9 @@ export function TimelinePage({
             pausedDays
           )
         : null;
-    const calculatedPredictionDate =
-      recalculatedBatchPredictionDate ?? predictionDate;
-    const adjustedEyeIntervals = selectedEyeAssignmentIntervals.map(
-      (interval, index) =>
-        index === 0 ? { ...interval, startDate } : { ...interval }
+    const calculatedPredictionDate = recalculatedBatchPredictionDate ?? predictionDate;
+    const adjustedEyeIntervals = selectedEyeAssignmentIntervals.map((interval, index) =>
+      index === 0 ? { ...interval, startDate } : { ...interval }
     );
     const recalculatedCasePredictionDate =
       selectedProfile?.managementTemplate === "lens_case"
@@ -2588,26 +2449,28 @@ export function TimelinePage({
         : null;
     const nextPredictionDate =
       selectedProfile?.managementTemplate === "lens_case"
-        ? recalculatedCasePredictionDate ?? predictionDate
+        ? (recalculatedCasePredictionDate ?? predictionDate)
         : selectedProfile?.managementTemplate === "opened_container"
-        ? [
-            selectedItem.depletionPredictionDate ?? calculatedPredictionDate,
-            openedExpiryDate || selectedItem.openedExpiryDate
-          ]
-            .filter((date): date is LocalDate => Boolean(date))
-            .sort()[0]
-        : calculatedPredictionDate;
-    const movedLocation =
-      selectedItem.locationId && selectedItem.locationId !== location.id;
-    const nextLocationIntervals = selectedItem.locationIntervals?.map((entry) => ({
-      ...entry
-    })) ??
+          ? [
+              selectedItem.depletionPredictionDate ?? calculatedPredictionDate,
+              openedExpiryDate || selectedItem.openedExpiryDate
+            ]
+              .filter((date): date is LocalDate => Boolean(date))
+              .sort()[0]
+          : calculatedPredictionDate;
+    const movedLocation = selectedItem.locationId && selectedItem.locationId !== location.id;
+    const nextLocationIntervals =
+      selectedItem.locationIntervals?.map((entry) => ({
+        ...entry
+      })) ??
       (selectedItem.locationId
-        ? [{
-            locationId: selectedItem.locationId,
-            startDate: selectedItem.startDate,
-            endDate: null
-          }]
+        ? [
+            {
+              locationId: selectedItem.locationId,
+              startDate: selectedItem.startDate,
+              endDate: null
+            }
+          ]
         : []);
     if (movedLocation) {
       const last = nextLocationIntervals.at(-1);
@@ -2638,14 +2501,11 @@ export function TimelinePage({
             )
           }
         : {}),
-      ...(nextLocationIntervals.length > 0
-        ? { locationIntervals: nextLocationIntervals }
-        : {}),
+      ...(nextLocationIntervals.length > 0 ? { locationIntervals: nextLocationIntervals } : {}),
       ...(selectedItem.eyeAssignmentIntervals
         ? {
-            eyeAssignmentIntervals: selectedItem.eyeAssignmentIntervals.map(
-              (interval, index) =>
-                index === 0 ? { ...interval, startDate } : { ...interval }
+            eyeAssignmentIntervals: selectedItem.eyeAssignmentIntervals.map((interval, index) =>
+              index === 0 ? { ...interval, startDate } : { ...interval }
             )
           }
         : {}),
@@ -2659,9 +2519,7 @@ export function TimelinePage({
         : effectiveInventoryTransactions(transactions)
             .filter(
               (transaction) =>
-                ["activate", "package_open", "loose_allocate"].includes(
-                  transaction.type
-                ) &&
+                ["activate", "package_open", "loose_allocate"].includes(transaction.type) &&
                 transaction.reversibleWithInstance !== false &&
                 transaction.relatedInstanceId === selectedItem.id &&
                 transaction.occurredDate !== startDate
@@ -2685,28 +2543,23 @@ export function TimelinePage({
             ]);
     const remainingAtSource =
       movedLocation && selectedLot && selectedItem.locationId
-        ? Math.max(
-            0,
-            availableUnitsAtLocation(
-              selectedLot,
-              selectedItem.locationId,
-              transactions
-            )
-          )
+        ? Math.max(0, availableUnitsAtLocation(selectedLot, selectedItem.locationId, transactions))
         : 0;
     const transferTransactions: InventoryTransaction[] =
       remainingAtSource > 0 && selectedItem.sourceStockLotId && selectedItem.locationId
-        ? [{
-            id: `tx-${crypto.randomUUID()}`,
-            stockLotId: selectedItem.sourceStockLotId,
-            occurredDate: todayLocalDate(),
-            type: "transfer",
-            quantityDelta: 0,
-            fromLocationId: selectedItem.locationId,
-            toLocationId: location.id,
-            transferQuantity: remainingAtSource,
-            reason: `时间轴实例“${selectedItem.label}”移动地点并转移全部剩余库存`
-          }]
+        ? [
+            {
+              id: `tx-${crypto.randomUUID()}`,
+              stockLotId: selectedItem.sourceStockLotId,
+              occurredDate: todayLocalDate(),
+              type: "transfer",
+              quantityDelta: 0,
+              fromLocationId: selectedItem.locationId,
+              toLocationId: location.id,
+              transferQuantity: remainingAtSource,
+              reason: `时间轴实例“${selectedItem.label}”移动地点并转移全部剩余库存`
+            }
+          ]
         : [];
     try {
       await commitTimelineItemInventoryUpdate(nextItem, [
@@ -2724,9 +2577,7 @@ export function TimelinePage({
   function openAddDialog(profileId: string) {
     const profile = profileById.get(profileId);
     if (!profile?.active) return;
-    const firstProduct = products.find(
-      (product) => productMatchesProfile(product, profile)
-    );
+    const firstProduct = products.find((product) => productMatchesProfile(product, profile));
     const firstLot = firstProduct
       ? availableLotsByExpiry(firstProduct, lots, transactions, items)[0]
       : undefined;
@@ -2780,13 +2631,7 @@ export function TimelinePage({
     const lot = lots.find((item) => item.id === lotId);
     setAddLotId(lotId);
     setAddDailySource(
-      initialAddInventorySource(
-        addProfile,
-        lot,
-        selectedAddProduct,
-        transactions,
-        items
-      )
+      initialAddInventorySource(addProfile, lot, selectedAddProduct, transactions, items)
     );
     const durationDays =
       lot?.expectedUsageDays ??
@@ -2818,19 +2663,11 @@ export function TimelinePage({
 
   async function handleAdd(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (
-      !addProfile ||
-      !addTemplateSupported ||
-      !selectedAddProduct ||
-      !selectedAddLot
-    ) {
+    if (!addProfile || !addTemplateSupported || !selectedAddProduct || !selectedAddLot) {
       return;
     }
     const formData = new FormData(event.currentTarget);
-    if (
-      addProfile.managementTemplate === "lens_case" &&
-      formData.getAll("eyeSides").length === 0
-    ) {
+    if (addProfile.managementTemplate === "lens_case" && formData.getAll("eyeSides").length === 0) {
       setAddNotice("镜盒启用时请至少选择左眼或右眼");
       return;
     }
@@ -2845,30 +2682,20 @@ export function TimelinePage({
           name,
           startDate: String(formData.get("startDate")) as LocalDate,
           locationId: String(formData.get("locationId")),
-          ...(expectedEndDate
-            ? { expectedEndDate: expectedEndDate as LocalDate }
-            : {}),
-          ...(["soft_daily", "soft_reusable"].includes(
-            addProfile.managementTemplate
-          )
+          ...(expectedEndDate ? { expectedEndDate: expectedEndDate as LocalDate } : {}),
+          ...(["soft_daily", "soft_reusable"].includes(addProfile.managementTemplate)
             ? {
                 inventorySourceKind: addDailySource,
                 ...(addProfile.managementTemplate === "soft_daily"
                   ? {
-                      initialUnitQuantity: Math.max(
-                        1,
-                        Number(formData.get("initialUnitQuantity"))
-                      )
+                      initialUnitQuantity: Math.max(1, Number(formData.get("initialUnitQuantity")))
                     }
                   : {})
               }
             : {}),
           ...(addProfile.managementTemplate === "batch_consumable"
             ? {
-                usageRatePerDay: Math.max(
-                  0.01,
-                  Number(formData.get("usageRatePerDay"))
-                )
+                usageRatePerDay: Math.max(0.01, Number(formData.get("usageRatePerDay")))
               }
             : {}),
           ...(addProfile.managementTemplate === "lens_case"
@@ -2876,9 +2703,7 @@ export function TimelinePage({
                 eyeSides: formData
                   .getAll("eyeSides")
                   .map(String)
-                  .filter(
-                    (side): side is "L" | "R" => side === "L" || side === "R"
-                  )
+                  .filter((side): side is "L" | "R" => side === "L" || side === "R")
               }
             : {}),
           ...(addProfile.managementTemplate === "opened_container"
@@ -2929,7 +2754,9 @@ export function TimelinePage({
           </button>
           <div className={styles.filterWrap}>
             <button
-              className={showFilters || statusFilter !== "all" ? styles.controlActive : styles.control}
+              className={
+                showFilters || statusFilter !== "all" ? styles.controlActive : styles.control
+              }
               onClick={() => setShowFilters((value) => !value)}
               type="button"
             >
@@ -3039,9 +2866,7 @@ export function TimelinePage({
               {timelineTicks.ticks.map((tick) => {
                 const x = dateToX(tick.date, viewport);
                 const hasContextBands = timelineTicks.contextBands.length > 0;
-                const labelEndX = tick.labelEndDate
-                  ? dateToX(tick.labelEndDate, viewport)
-                  : null;
+                const labelEndX = tick.labelEndDate ? dateToX(tick.labelEndDate, viewport) : null;
                 const labelX = labelEndX !== null ? (labelEndX - x) / 2 : 7;
                 const labelIsVisible =
                   tick.showLabel &&
@@ -3181,19 +3006,18 @@ export function TimelinePage({
                       <strong>{row.categoryName}</strong>
                       {row.categoryId && renderCategorySummary(row.categoryId)}
                     </div>
-                    {row.categoryId &&
-                      profileById.get(row.categoryId)?.active && (
-                        <button
-                          aria-label={`向${row.categoryName}添加记录`}
-                          className={styles.rowAddButton}
-                          onClick={() => openAddDialog(row.categoryId!)}
-                          title="添加记录"
-                          type="button"
-                        >
-                          <Icon name="plus" size={15} />
-                          <span>添加</span>
-                        </button>
-                      )}
+                    {row.categoryId && profileById.get(row.categoryId)?.active && (
+                      <button
+                        aria-label={`向${row.categoryName}添加记录`}
+                        className={styles.rowAddButton}
+                        onClick={() => openAddDialog(row.categoryId!)}
+                        title="添加记录"
+                        type="button"
+                      >
+                        <Icon name="plus" size={15} />
+                        <span>添加</span>
+                      </button>
+                    )}
                   </div>
                 )
               )}
@@ -3224,12 +3048,7 @@ export function TimelinePage({
                     width="7"
                   >
                     <rect fill="var(--color-paused)" height="7" width="7" />
-                    <line
-                      stroke="#ffffff"
-                      strokeOpacity=".3"
-                      strokeWidth="2"
-                      y2="7"
-                    />
+                    <line stroke="#ffffff" strokeOpacity=".3" strokeWidth="2" y2="7" />
                   </pattern>
                 </defs>
 
@@ -3286,14 +3105,11 @@ export function TimelinePage({
                   .flatMap((row) =>
                     filteredItems
                       .filter(
-                        (item) =>
-                          item.categoryId === row.categoryId && row.laneByItem.has(item.id)
+                        (item) => item.categoryId === row.categoryId && row.laneByItem.has(item.id)
                       )
                       .map((item) => {
                         const itemProfile = profileById.get(item.categoryId);
-                        const itemFacts = usageFacts.filter(
-                          (fact) => fact.itemId === item.id
-                        );
+                        const itemFacts = usageFacts.filter((fact) => fact.itemId === item.id);
                         const itemUsedQuantity = itemFacts.reduce(
                           (total, fact) => total + fact.quantity,
                           0
@@ -3307,9 +3123,7 @@ export function TimelinePage({
                         );
                         const itemBaseUnit =
                           itemProduct?.baseUnit ?? itemProfileBaseUnit(itemProfile);
-                        const itemLot = lots.find(
-                          (lot) => lot.id === item.sourceStockLotId
-                        );
+                        const itemLot = lots.find((lot) => lot.id === item.sourceStockLotId);
                         const itemReusableCapacity =
                           item.initialUnitQuantity ??
                           (itemLot && itemProduct
@@ -3320,16 +3134,11 @@ export function TimelinePage({
                           .reduce((total, fact) => total + fact.quantity, 0);
                         const itemReusableRemaining = Math.max(
                           0,
-                          itemReusableCapacity -
-                            itemReusableCycles.length -
-                            itemReusableLosses
+                          itemReusableCapacity - itemReusableCycles.length - itemReusableLosses
                         );
-                        const previewDays =
-                          dragPreview?.itemId === item.id ? dragPreview.days : 0;
-                        const x1 =
-                          dateToX(addLocalDays(item.startDate, previewDays), viewport);
-                        const actualEnd =
-                          item.endDate ?? addLocalDays(todayLocalDate(), 1);
+                        const previewDays = dragPreview?.itemId === item.id ? dragPreview.days : 0;
+                        const x1 = dateToX(addLocalDays(item.startDate, previewDays), viewport);
+                        const actualEnd = item.endDate ?? addLocalDays(todayLocalDate(), 1);
                         const x2 = dateToX(addLocalDays(actualEnd, previewDays), viewport);
                         const lane = row.laneByItem.get(item.id) ?? 0;
                         const y = row.y + 12 + lane * LANE_HEIGHT;
@@ -3341,7 +3150,8 @@ export function TimelinePage({
                           {
                             startDate: item.startDate,
                             endDate: item.endDate ?? todayLocalDate(),
-                            status: item.status === "paused" ? ("paused" as const) : ("active" as const)
+                            status:
+                              item.status === "paused" ? ("paused" as const) : ("active" as const)
                           }
                         ];
                         const displayedPredictionDate = item.predictionDate
@@ -3362,16 +3172,11 @@ export function TimelinePage({
                           displayedOpenedExpiry !== null &&
                           displayedPredictionDate === displayedOpenedExpiry;
                         const replacementForecastVisible =
-                          item.status !== "completed" &&
-                          predictionX !== null &&
-                          predictionX > x2;
+                          item.status !== "completed" && predictionX !== null && predictionX > x2;
                         const itemEyeUsage =
                           itemProfile?.managementTemplate === "lens_case"
                             ? Array.from(
-                                eyeUsageTotals(
-                                  eyeAssignmentIntervalsFor(item),
-                                  todayLocalDate()
-                                )
+                                eyeUsageTotals(eyeAssignmentIntervalsFor(item), todayLocalDate())
                               )
                             : [];
                         const dynamicUsageSummary = timelineItemUsageSummary(
@@ -3382,21 +3187,20 @@ export function TimelinePage({
                         const itemDetail =
                           dynamicUsageSummary ??
                           (itemProfile?.managementTemplate === "soft_daily"
-                              ? `剩余 ${Math.max(
-                                  0,
-                                  (item.initialUnitQuantity ?? 0) - itemUsedQuantity
-                                )} ${itemBaseUnit}`
-                              : itemProfile?.managementTemplate === "soft_reusable"
-                                ? `盒内剩余 ${itemReusableRemaining} ${itemBaseUnit}`
-                                : itemProfile?.managementTemplate === "lens_case"
-                                  ? itemEyeUsage.length
-                                    ? itemEyeUsage
-                                        .map(
-                                          ([side, days]) =>
-                                            `${side === "L" ? "左" : "右"} ${days}天`
-                                        )
-                                        .join(" · ")
-                                    : "未设置眼别"
+                            ? `剩余 ${Math.max(
+                                0,
+                                (item.initialUnitQuantity ?? 0) - itemUsedQuantity
+                              )} ${itemBaseUnit}`
+                            : itemProfile?.managementTemplate === "soft_reusable"
+                              ? `盒内剩余 ${itemReusableRemaining} ${itemBaseUnit}`
+                              : itemProfile?.managementTemplate === "lens_case"
+                                ? itemEyeUsage.length
+                                  ? itemEyeUsage
+                                      .map(
+                                        ([side, days]) => `${side === "L" ? "左" : "右"} ${days}天`
+                                      )
+                                      .join(" · ")
+                                  : "未设置眼别"
                                 : itemProfile?.managementTemplate === "discrete_dose"
                                   ? `已使用 ${itemUsedQuantity} ${itemBaseUnit}`
                                   : item.detail);
@@ -3419,8 +3223,7 @@ export function TimelinePage({
                                   plotRef.current
                                 ) {
                                   const clickedDate = xToDayCellDate(
-                                    event.clientX -
-                                      plotRef.current.getBoundingClientRect().left,
+                                    event.clientX - plotRef.current.getBoundingClientRect().left,
                                     viewport
                                   );
                                   if (
@@ -3433,8 +3236,7 @@ export function TimelinePage({
                                         fact.kind ===
                                           (itemProfile.managementTemplate === "soft_daily"
                                             ? "wear"
-                                            : "dose") &&
-                                        fact.date === clickedDate
+                                            : "dose") && fact.date === clickedDate
                                     );
                                     if (existing) {
                                       setEditingUsageFactId(existing.id);
@@ -3480,12 +3282,12 @@ export function TimelinePage({
                                   itemProfile?.managementTemplate === "discrete_dose"
                                     ? styles.segmentTracking
                                     : segment.status === "paused"
-                                    ? isCurrentPause
-                                      ? styles.segmentPausedCurrent
-                                      : styles.segmentPausedHistory
-                                    : item.status === "completed"
-                                      ? styles.segmentCompleted
-                                      : styles.segmentActive;
+                                      ? isCurrentPause
+                                        ? styles.segmentPausedCurrent
+                                        : styles.segmentPausedHistory
+                                      : item.status === "completed"
+                                        ? styles.segmentCompleted
+                                        : styles.segmentActive;
                                 return (
                                   <rect
                                     className={segmentClass}
@@ -3505,10 +3307,7 @@ export function TimelinePage({
                                   viewport
                                 );
                                 const cycleX2 = dateToX(
-                                  addLocalDays(
-                                    cycle.endDate ?? actualEnd,
-                                    previewDays
-                                  ),
+                                  addLocalDays(cycle.endDate ?? actualEnd, previewDays),
                                   viewport
                                 );
                                 return (
@@ -3535,10 +3334,7 @@ export function TimelinePage({
                               )}
                             </g>
                             {itemFacts.map((fact) => {
-                              const factX = dateToX(
-                                addLocalDays(fact.date, previewDays),
-                                viewport
-                              );
+                              const factX = dateToX(addLocalDays(fact.date, previewDays), viewport);
                               return fact.kind === "extra_loss" ? (
                                 <path
                                   className={styles.usageLossMarker}
@@ -3571,9 +3367,7 @@ export function TimelinePage({
                                     className={styles.forecastExpiryNode}
                                     d={`M${predictionX} ${y + 8} L${predictionX + 5} ${
                                       y + 13
-                                    } L${predictionX} ${y + 18} L${predictionX - 5} ${
-                                      y + 13
-                                    } Z`}
+                                    } L${predictionX} ${y + 18} L${predictionX - 5} ${y + 13} Z`}
                                   />
                                 ) : (
                                   <circle cx={predictionX} cy={y + 13} r="5" />
@@ -3603,15 +3397,11 @@ export function TimelinePage({
                                       y + 13
                                     } Z`}
                                   />
-                                  {viewport.pixelsPerDay > 2.5 &&
-                                    displayedOpenedExpiry && (
-                                      <text x={openedExpiryX + 6} y={y + 25}>
-                                        失效 {format(
-                                          parseLocalDate(displayedOpenedExpiry),
-                                          "M月d日"
-                                        )}
-                                      </text>
-                                    )}
+                                  {viewport.pixelsPerDay > 2.5 && displayedOpenedExpiry && (
+                                    <text x={openedExpiryX + 6} y={y + 25}>
+                                      失效 {format(parseLocalDate(displayedOpenedExpiry), "M月d日")}
+                                    </text>
+                                  )}
                                 </g>
                               )}
                             {plans.map((plan) => {
@@ -3690,8 +3480,8 @@ export function TimelinePage({
             <small>
               {selectedProduct?.capacityMl
                 ? `${selectedProduct.capacityMl} mL`
-                : selectedProduct?.specification ?? "未填写规格"} · 批次{" "}
-              {selectedLot?.internalLotCode ?? "记录缺失"}
+                : (selectedProduct?.specification ?? "未填写规格")}{" "}
+              · 批次 {selectedLot?.internalLotCode ?? "记录缺失"}
               {selectedLot?.lotNumber ? ` · 生产批号 ${selectedLot.lotNumber}` : ""}
             </small>
           </section>
@@ -3705,11 +3495,7 @@ export function TimelinePage({
               </label>
               <label>
                 启用日期
-                <LocalDateInput
-                  defaultValue={selectedItem.startDate}
-                  name="startDate"
-                  required
-                />
+                <LocalDateInput defaultValue={selectedItem.startDate} name="startDate" required />
               </label>
               <label>
                 当前地点
@@ -3736,7 +3522,7 @@ export function TimelinePage({
                       ? "预计耗尽日期"
                       : selectedProfile?.managementTemplate === "lens_case"
                         ? "预计切换／更换眼别日期"
-                      : "预计更换日期"}
+                        : "预计更换日期"}
                   <LocalDateInput
                     defaultValue={selectedItem.predictionDate}
                     name="predictionDate"
@@ -3765,10 +3551,7 @@ export function TimelinePage({
                 selectedItem.depletionPredictionDate && (
                   <label>
                     预测使用完日期
-                    <LocalDateInput
-                      readOnly
-                      value={selectedItem.depletionPredictionDate}
-                    />
+                    <LocalDateInput readOnly value={selectedItem.depletionPredictionDate} />
                     <small>最终预计更换日期取本日期与最晚使用日期中的较早值。</small>
                   </label>
                 )}
@@ -3837,15 +3620,15 @@ export function TimelinePage({
                         } 天 · 剩余 ${selectedRemainingQuantity ?? 0} ${selectedBaseUnit}`
                       : selectedProfile?.managementTemplate === "soft_reusable"
                         ? `已启用 ${selectedReusableCycles.length} ${selectedBaseUnit} · 盒内剩余 ${selectedRemainingQuantity ?? 0} ${selectedBaseUnit}`
-                      : selectedProfile?.managementTemplate === "discrete_dose"
-                        ? `已使用 ${selectedUsedQuantity} ${selectedBaseUnit}`
-                        : selectedProfile?.managementTemplate === "batch_consumable"
-                          ? selectedItem.status === "completed"
-                            ? `实际剩余 ${selectedLocationAvailableUnits} ${selectedBaseUnit}`
-                            : `预计剩余 ${Math.round(
-                                Math.max(0, selectedPredictedQuantity ?? 0)
-                              )} ${selectedBaseUnit}`
-                        : `已使用 ${selectedItemUsedDays} 天`}
+                        : selectedProfile?.managementTemplate === "discrete_dose"
+                          ? `已使用 ${selectedUsedQuantity} ${selectedBaseUnit}`
+                          : selectedProfile?.managementTemplate === "batch_consumable"
+                            ? selectedItem.status === "completed"
+                              ? `实际剩余 ${selectedLocationAvailableUnits} ${selectedBaseUnit}`
+                              : `预计剩余 ${Math.round(
+                                  Math.max(0, selectedPredictedQuantity ?? 0)
+                                )} ${selectedBaseUnit}`
+                            : `已使用 ${selectedItemUsedDays} 天`}
                   </dd>
                 </div>
                 {selectedItem.predictionDate && (
@@ -3857,7 +3640,7 @@ export function TimelinePage({
                           ? "预计用完"
                           : selectedProfile?.managementTemplate === "lens_case"
                             ? "预计切换／更换眼别"
-                        : "预计更换"}
+                            : "预计更换"}
                     </dt>
                     <dd>{displayLocalDate(selectedItem.predictionDate)}</dd>
                   </div>
@@ -3885,10 +3668,7 @@ export function TimelinePage({
                       <dd>
                         {selectedAssignmentUsage.length
                           ? selectedAssignmentUsage
-                              .map(
-                                ([side, days]) =>
-                                  `${side === "L" ? "左眼" : "右眼"} ${days} 天`
-                              )
+                              .map(([side, days]) => `${side === "L" ? "左眼" : "右眼"} ${days} 天`)
                               .join("、")
                           : "暂无"}
                       </dd>
@@ -3933,8 +3713,7 @@ export function TimelinePage({
                       const intervalEnd = interval.endDate ?? todayLocalDate();
                       const days = Math.max(
                         0,
-                        daysBetween(interval.startDate, intervalEnd) +
-                          (interval.endDate ? 0 : 1)
+                        daysBetween(interval.startDate, intervalEnd) + (interval.endDate ? 0 : 1)
                       );
                       return (
                         <article
@@ -3945,9 +3724,7 @@ export function TimelinePage({
                             <strong>
                               {interval.eyeSides.length
                                 ? interval.eyeSides
-                                    .map((side) =>
-                                      side === "L" ? "左眼" : "右眼"
-                                    )
+                                    .map((side) => (side === "L" ? "左眼" : "右眼"))
                                     .join("、")
                                 : "未设置眼别"}
                             </strong>
@@ -3955,7 +3732,8 @@ export function TimelinePage({
                               {displayLocalDate(interval.startDate)}－
                               {interval.endDate
                                 ? displayLocalDate(addLocalDays(interval.endDate, -1))
-                                : "使用中"} · {days} 天
+                                : "使用中"}{" "}
+                              · {days} 天
                             </span>
                           </div>
                           <div className={styles.usageFactActions}>
@@ -3981,9 +3759,7 @@ export function TimelinePage({
                     <div className={styles.lifecycleError}>{usageError}</div>
                   )}
                   {reusableCycleError && (
-                    <div className={styles.lifecycleError}>
-                      {reusableCycleError}
-                    </div>
+                    <div className={styles.lifecycleError}>{reusableCycleError}</div>
                   )}
                   <div className={styles.usageHistoryHeading}>
                     <div>
@@ -4007,9 +3783,7 @@ export function TimelinePage({
                             <span>
                               {displayLocalDate(record.cycle.startDate)}－
                               {record.cycle.endDate
-                                ? displayLocalDate(
-                                    addLocalDays(record.cycle.endDate, -1)
-                                  )
+                                ? displayLocalDate(addLocalDays(record.cycle.endDate, -1))
                                 : "使用中"}
                               {record.cycle.status === "active"
                                 ? ` · 预计 ${displayLocalDate(record.cycle.predictionDate)} 更换`
@@ -4052,14 +3826,9 @@ export function TimelinePage({
                           </div>
                         </article>
                       ) : (
-                        <article
-                          className={styles.usageFactRecord}
-                          key={`loss-${record.fact.id}`}
-                        >
+                        <article className={styles.usageFactRecord} key={`loss-${record.fact.id}`}>
                           <div>
-                            <strong>
-                              额外损耗 · {record.fact.reason ?? "未填写原因"}
-                            </strong>
+                            <strong>额外损耗 · {record.fact.reason ?? "未填写原因"}</strong>
                             <span>
                               {displayLocalDate(record.fact.date)} · {record.fact.quantity}{" "}
                               {selectedBaseUnit}
@@ -4075,10 +3844,7 @@ export function TimelinePage({
                             >
                               编辑
                             </button>
-                            <button
-                              onClick={() => undoUsageFact(record.fact.id)}
-                              type="button"
-                            >
+                            <button onClick={() => undoUsageFact(record.fact.id)} type="button">
                               撤销
                             </button>
                           </div>
@@ -4101,68 +3867,65 @@ export function TimelinePage({
               )}
               {selectedUsageFacts.length > 0 &&
                 selectedProfile?.managementTemplate !== "soft_reusable" && (
-                <section className={styles.usageFactsSection}>
-                  {usageError && !editingUsageFactId && (
-                    <div className={styles.lifecycleError}>{usageError}</div>
-                  )}
-                  <div className={styles.usageHistoryHeading}>
-                    <div>
-                      <strong>使用与损耗记录</strong>
-                      <span>{selectedUsageFacts.length} 条</span>
+                  <section className={styles.usageFactsSection}>
+                    {usageError && !editingUsageFactId && (
+                      <div className={styles.lifecycleError}>{usageError}</div>
+                    )}
+                    <div className={styles.usageHistoryHeading}>
+                      <div>
+                        <strong>使用与损耗记录</strong>
+                        <span>{selectedUsageFacts.length} 条</span>
+                      </div>
                     </div>
-                  </div>
-                  <div
-                    className={`${styles.usageFactsList} ${
-                      showAllUsageFacts ? styles.usageFactsListExpanded : ""
-                    }`}
-                  >
-                    {visibleUsageFacts.map((fact) => (
-                      <article className={styles.usageFactRecord} key={fact.id}>
-                        <div>
-                          <strong>
-                            {fact.kind === "wear"
-                              ? "正常佩戴"
-                              : fact.kind === "dose"
-                                ? "使用一对"
-                                : fact.reason ?? "额外消耗"}
-                          </strong>
-                          <span>
-                            {displayLocalDate(fact.date)} · {fact.quantity}{" "}
-                            {selectedBaseUnit}
-                          </span>
-                        </div>
-                        <div className={styles.usageFactActions}>
-                          <button
-                            onClick={() => {
-                              setEditingUsageFactId(fact.id);
-                              setUsageError(null);
-                            }}
-                            type="button"
-                          >
-                            编辑
-                          </button>
-                          <button onClick={() => undoUsageFact(fact.id)} type="button">
-                            撤销
-                          </button>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                  {selectedUsageFacts.length > 3 && (
-                    <button
-                      className={styles.usageFactsToggle}
-                      onClick={() =>
-                        setShowAllUsageFacts((current) => !current)
-                      }
-                      type="button"
+                    <div
+                      className={`${styles.usageFactsList} ${
+                        showAllUsageFacts ? styles.usageFactsListExpanded : ""
+                      }`}
                     >
-                      {showAllUsageFacts
-                        ? "收起使用与损耗记录"
-                        : `查看全部 ${selectedUsageFacts.length} 条`}
-                    </button>
-                  )}
-                </section>
-              )}
+                      {visibleUsageFacts.map((fact) => (
+                        <article className={styles.usageFactRecord} key={fact.id}>
+                          <div>
+                            <strong>
+                              {fact.kind === "wear"
+                                ? "正常佩戴"
+                                : fact.kind === "dose"
+                                  ? "使用一对"
+                                  : (fact.reason ?? "额外消耗")}
+                            </strong>
+                            <span>
+                              {displayLocalDate(fact.date)} · {fact.quantity} {selectedBaseUnit}
+                            </span>
+                          </div>
+                          <div className={styles.usageFactActions}>
+                            <button
+                              onClick={() => {
+                                setEditingUsageFactId(fact.id);
+                                setUsageError(null);
+                              }}
+                              type="button"
+                            >
+                              编辑
+                            </button>
+                            <button onClick={() => undoUsageFact(fact.id)} type="button">
+                              撤销
+                            </button>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                    {selectedUsageFacts.length > 3 && (
+                      <button
+                        className={styles.usageFactsToggle}
+                        onClick={() => setShowAllUsageFacts((current) => !current)}
+                        type="button"
+                      >
+                        {showAllUsageFacts
+                          ? "收起使用与损耗记录"
+                          : `查看全部 ${selectedUsageFacts.length} 条`}
+                      </button>
+                    )}
+                  </section>
+                )}
               {selectedProfile?.managementTemplate === "rigid_long_term" && (
                 <section className={styles.careEventsSection}>
                   <div className={styles.careEventsHeading}>
@@ -4237,16 +4000,16 @@ export function TimelinePage({
                               <button
                                 className={styles.careEventDelete}
                                 onClick={async () => {
-                                  if (globalThis.confirm(`确定删除“${careEventLabel(event)}”吗？`)) {
+                                  if (
+                                    globalThis.confirm(`确定删除“${careEventLabel(event)}”吗？`)
+                                  ) {
                                     try {
                                       await commitDataMutation(() => {
                                         deleteCareEvent(event.id);
                                       });
                                     } catch (error) {
                                       setCareEventError(
-                                        error instanceof Error
-                                          ? error.message
-                                          : "护理事件删除失败"
+                                        error instanceof Error ? error.message : "护理事件删除失败"
                                       );
                                     }
                                   }
@@ -4280,15 +4043,14 @@ export function TimelinePage({
                   setEditingPauseIndex(pauseIndex);
                   setLifecycleError(null);
                 }}
+                onDeletePause={(pauseIndex) => void handlePauseDelete(pauseIndex)}
               />
               {(selectedItem.locationIntervals?.length ?? 0) > 0 && (
                 <section className={styles.usageHistory}>
                   <div className={styles.usageHistoryHeading}>
                     <div>
                       <strong>地点历史</strong>
-                      <span>
-                        {selectedItem.locationIntervals?.length ?? 0} 段记录
-                      </span>
+                      <span>{selectedItem.locationIntervals?.length ?? 0} 段记录</span>
                     </div>
                   </div>
                   <div className={styles.usageHistoryList}>
@@ -4300,9 +4062,8 @@ export function TimelinePage({
                         <span className={styles.usageHistoryDot} />
                         <div>
                           <strong>
-                            {locations.find(
-                              (location) => location.id === interval.locationId
-                            )?.name ?? "未知地点"}
+                            {locations.find((location) => location.id === interval.locationId)
+                              ?.name ?? "未知地点"}
                           </strong>
                           <span>
                             {displayLocalDate(interval.startDate)}
@@ -4334,33 +4095,21 @@ export function TimelinePage({
                     {selectedItem.status !== "completed" && (
                       <>
                         {selectedItem.status === "paused" ? (
-                          <button
-                            onClick={() => openLifecycleAction("resume")}
-                            type="button"
-                          >
+                          <button onClick={() => openLifecycleAction("resume")} type="button">
                             恢复使用
                           </button>
                         ) : (
-                          <button
-                            onClick={() => openLifecycleAction("pause")}
-                            type="button"
-                          >
+                          <button onClick={() => openLifecycleAction("pause")} type="button">
                             暂停使用
                           </button>
                         )}
-                        <button
-                          onClick={() => openLifecycleAction("end")}
-                          type="button"
-                        >
+                        <button onClick={() => openLifecycleAction("end")} type="button">
                           结束使用
                         </button>
                       </>
                     )}
                     {selectedItem.status === "completed" && (
-                      <button
-                        onClick={() => openLifecycleAction("reopen")}
-                        type="button"
-                      >
+                      <button onClick={() => openLifecycleAction("reopen")} type="button">
                         撤销结束
                       </button>
                     )}
@@ -4389,9 +4138,7 @@ export function TimelinePage({
                               盒内镜片损耗
                             </button>
                           )}
-                          {selectedReusableCycles.some(
-                            (cycle) => cycle.status === "active"
-                          ) ? (
+                          {selectedReusableCycles.some((cycle) => cycle.status === "active") ? (
                             <button onClick={() => openLifecycleAction("end")} type="button">
                               结束当前镜片
                             </button>
@@ -4416,17 +4163,11 @@ export function TimelinePage({
                         selectedProfile?.managementTemplate === "batch_consumable") && (
                         <>
                           {selectedItem.status === "paused" ? (
-                            <button
-                              onClick={() => openLifecycleAction("resume")}
-                              type="button"
-                            >
+                            <button onClick={() => openLifecycleAction("resume")} type="button">
                               恢复使用
                             </button>
                           ) : (
-                            <button
-                              onClick={() => openLifecycleAction("pause")}
-                              type="button"
-                            >
+                            <button onClick={() => openLifecycleAction("pause")} type="button">
                               暂停使用
                             </button>
                           )}
@@ -4510,11 +4251,7 @@ export function TimelinePage({
             )}
             <label>
               镜片名称
-              <input
-                defaultValue={editingReusableCycle.label}
-                name="label"
-                required
-              />
+              <input defaultValue={editingReusableCycle.label} name="label" required />
             </label>
             <label>
               启用日期
@@ -4579,9 +4316,9 @@ export function TimelinePage({
                       ? "恢复使用"
                       : lifecycleAction === "next"
                         ? "启用下一片"
-                      : lifecycleAction === "end"
-                        ? "结束使用"
-                        : "撤销结束"}
+                        : lifecycleAction === "end"
+                          ? "结束使用"
+                          : "撤销结束"}
                 </h2>
               </div>
               <button
@@ -4595,9 +4332,7 @@ export function TimelinePage({
                 <Icon name="close" />
               </button>
             </div>
-            {lifecycleError && (
-              <div className={styles.lifecycleError}>{lifecycleError}</div>
-            )}
+            {lifecycleError && <div className={styles.lifecycleError}>{lifecycleError}</div>}
             {(lifecycleAction === "end" || lifecycleAction === "reopen") && (
               <div
                 className={`${styles.actionImpact} ${
@@ -4606,9 +4341,7 @@ export function TimelinePage({
                     : styles.actionImpactRecovery
                 }`}
               >
-                <strong>
-                  {lifecycleAction === "end" ? "完成后将发生" : "恢复内容"}
-                </strong>
+                <strong>{lifecycleAction === "end" ? "完成后将发生" : "恢复内容"}</strong>
                 <ul>
                   {lifecycleAction === "end" ? (
                     <>
@@ -4618,9 +4351,7 @@ export function TimelinePage({
                           : "记录实际结束日期并把实例标记为结束使用；"}
                       </li>
                       {selectedProfile?.managementTemplate === "batch_consumable" && (
-                        <li>
-                          按实际盘点数量追加损耗或盘盈更正；预计剩余只作填写参考。
-                        </li>
+                        <li>按实际盘点数量追加损耗或盘盈更正；预计剩余只作填写参考。</li>
                       )}
                       <li>时间轴不再显示尚未到达的预计更换标记；</li>
                       <li>如为误操作，可稍后从详情中“撤销结束”。</li>
@@ -4649,9 +4380,7 @@ export function TimelinePage({
               </div>
             )}
             {lifecycleAction === "reopen" ? (
-              <p className={styles.lifecycleNotice}>
-                原有暂停记录和预计结束日期都会保留。
-              </p>
+              <p className={styles.lifecycleNotice}>原有暂停记录和预计结束日期都会保留。</p>
             ) : (
               <label>
                 {lifecycleAction === "pause"
@@ -4669,11 +4398,9 @@ export function TimelinePage({
                       ? selectedItem.stateIntervals?.at(-1)?.startDate
                       : lifecycleAction === "next"
                         ? selectedReusableCycles.at(-1)?.endDate
-                          ? reusableCycleActualEndDate(
-                              selectedReusableCycles.at(-1)!.endDate!
-                            )
+                          ? reusableCycleActualEndDate(selectedReusableCycles.at(-1)!.endDate!)
                           : selectedItem.startDate
-                      : selectedItem.startDate
+                        : selectedItem.startDate
                   }
                   name="date"
                   required
@@ -4684,17 +4411,11 @@ export function TimelinePage({
               selectedProfile?.managementTemplate === "batch_consumable" && (
                 <label>
                   实际剩余数量（{selectedBaseUnit}）
-                  <input
-                    min="0"
-                    name="actualRemainingQuantity"
-                    required
-                    step="1"
-                    type="number"
-                  />
+                  <input min="0" name="actualRemainingQuantity" required step="1" type="number" />
                   <small>
                     预计剩余 {Math.round(Math.max(0, selectedPredictedQuantity ?? 0))}{" "}
-                    {selectedBaseUnit}；账面库存 {selectedLocationAvailableUnits}{" "}
-                    {selectedBaseUnit}。请按实际盘点填写。
+                    {selectedBaseUnit}；账面库存 {selectedLocationAvailableUnits} {selectedBaseUnit}
+                    。请按实际盘点填写。
                   </small>
                 </label>
               )}
@@ -4710,9 +4431,7 @@ export function TimelinePage({
               </button>
               <button
                 className={
-                  lifecycleAction === "end"
-                    ? styles.warningActionButton
-                    : styles.primaryButton
+                  lifecycleAction === "end" ? styles.warningActionButton : styles.primaryButton
                 }
                 disabled={actionSubmitting}
                 type="submit"
@@ -4779,7 +4498,9 @@ export function TimelinePage({
                 原因（选填）
                 <input
                   name="reason"
-                  placeholder={usageAction === "discard" ? "例如：提前丢弃" : "例如：破损、掉落、同日第二片"}
+                  placeholder={
+                    usageAction === "discard" ? "例如：提前丢弃" : "例如：破损、掉落、同日第二片"
+                  }
                 />
               </label>
             )}
@@ -4809,9 +4530,7 @@ export function TimelinePage({
               </button>
               <button
                 className={
-                  usageAction === "discard"
-                    ? styles.confirmDeleteButton
-                    : styles.primaryButton
+                  usageAction === "discard" ? styles.confirmDeleteButton : styles.primaryButton
                 }
                 disabled={actionSubmitting}
                 type="submit"
@@ -4906,9 +4625,7 @@ export function TimelinePage({
                 <Icon name="close" />
               </button>
             </div>
-            {assignmentError && (
-              <div className={styles.lifecycleError}>{assignmentError}</div>
-            )}
+            {assignmentError && <div className={styles.lifecycleError}>{assignmentError}</div>}
             <label>
               开始日期
               <LocalDateInput
@@ -4922,9 +4639,7 @@ export function TimelinePage({
               结束日期
               <LocalDateInput
                 defaultValue={
-                  editingEyeInterval.endDate
-                    ? addLocalDays(editingEyeInterval.endDate, -1)
-                    : ""
+                  editingEyeInterval.endDate ? addLocalDays(editingEyeInterval.endDate, -1) : ""
                 }
                 max={todayLocalDate()}
                 name="endDate"
@@ -4984,9 +4699,7 @@ export function TimelinePage({
                 <Icon name="close" />
               </button>
             </div>
-            {assignmentError && (
-              <div className={styles.lifecycleError}>{assignmentError}</div>
-            )}
+            {assignmentError && <div className={styles.lifecycleError}>{assignmentError}</div>}
             <label>
               切换日期
               <LocalDateInput
@@ -5045,15 +4758,11 @@ export function TimelinePage({
                 <Icon name="close" />
               </button>
             </div>
-            {deleteItemError && (
-              <div className={styles.lifecycleError}>{deleteItemError}</div>
-            )}
+            {deleteItemError && <div className={styles.lifecycleError}>{deleteItemError}</div>}
             <div className={styles.deleteInstanceSummary}>
               <strong>删除后将同时处理：</strong>
               <ul>
-                {selectedHasActivation && (
-                  <li>撤销原始启用或库存分配流水，恢复对应库存形态；</li>
-                )}
+                {selectedHasActivation && <li>撤销原始启用或库存分配流水，恢复对应库存形态；</li>}
                 {selectedUsageFacts.length > 0 && (
                   <li>撤销 {selectedUsageFacts.length} 条使用或损耗库存流水；</li>
                 )}
@@ -5108,9 +4817,7 @@ export function TimelinePage({
                 <Icon name="close" />
               </button>
             </div>
-            {careEventError && (
-              <div className={styles.lifecycleError}>{careEventError}</div>
-            )}
+            {careEventError && <div className={styles.lifecycleError}>{careEventError}</div>}
             <label>
               事件类型
               <select defaultValue={editingCareEvent?.kind ?? "review"} name="kind">
@@ -5131,11 +4838,7 @@ export function TimelinePage({
             <label>
               事件日期
               <LocalDateInput
-                defaultValue={
-                  editingCareEvent
-                    ? careEventDate(editingCareEvent)
-                    : todayLocalDate()
-                }
+                defaultValue={editingCareEvent ? careEventDate(editingCareEvent) : todayLocalDate()}
                 min={selectedItem.startDate}
                 name="date"
                 required
@@ -5178,9 +4881,7 @@ export function TimelinePage({
                 <Icon name="close" />
               </button>
             </div>
-            {careEventError && (
-              <div className={styles.lifecycleError}>{careEventError}</div>
-            )}
+            {careEventError && <div className={styles.lifecycleError}>{careEventError}</div>}
             <p className={styles.lifecycleNotice}>
               原计划日期：{displayLocalDate(confirmingCareEvent.plannedDate)}。确认后保留计划日期，
               并将实际完成日期显示在时间轴上。
@@ -5241,8 +4942,7 @@ export function TimelinePage({
                 地点
                 <select
                   defaultValue={
-                    selectedItem.locationIntervals[editingLocationIntervalIndex]
-                      .locationId
+                    selectedItem.locationIntervals[editingLocationIntervalIndex].locationId
                   }
                   name="locationId"
                   required
@@ -5261,15 +4961,12 @@ export function TimelinePage({
                 本段开始日期
                 <LocalDateInput
                   defaultValue={
-                    selectedItem.locationIntervals[editingLocationIntervalIndex]
-                      .startDate
+                    selectedItem.locationIntervals[editingLocationIntervalIndex].startDate
                   }
                   max={
-                    selectedItem.locationIntervals[editingLocationIntervalIndex]
-                      .endDate
+                    selectedItem.locationIntervals[editingLocationIntervalIndex].endDate
                       ? addLocalDays(
-                          selectedItem.locationIntervals[editingLocationIntervalIndex]
-                            .endDate!,
+                          selectedItem.locationIntervals[editingLocationIntervalIndex].endDate!,
                           -1
                         )
                       : todayLocalDate()
@@ -5277,9 +4974,8 @@ export function TimelinePage({
                   min={
                     editingLocationIntervalIndex > 0
                       ? addLocalDays(
-                          selectedItem.locationIntervals[
-                            editingLocationIntervalIndex - 1
-                          ]!.startDate,
+                          selectedItem.locationIntervals[editingLocationIntervalIndex - 1]!
+                            .startDate,
                           1
                         )
                       : selectedItem.startDate
@@ -5331,15 +5027,11 @@ export function TimelinePage({
                   <Icon name="close" />
                 </button>
               </div>
-              {lifecycleError && (
-                <div className={styles.lifecycleError}>{lifecycleError}</div>
-              )}
+              {lifecycleError && <div className={styles.lifecycleError}>{lifecycleError}</div>}
               <label>
                 暂停日期
                 <LocalDateInput
-                  defaultValue={
-                    selectedItem.stateIntervals[editingPauseIndex].startDate
-                  }
+                  defaultValue={selectedItem.stateIntervals[editingPauseIndex].startDate}
                   max={todayLocalDate()}
                   min={selectedItem.startDate}
                   name="startDate"
@@ -5356,11 +5048,8 @@ export function TimelinePage({
                     selectedItem.status === "completed" &&
                     editingPauseIndex === selectedItem.stateIntervals.length - 1 &&
                     selectedItem.stateIntervals[editingPauseIndex].endDate
-                      ? addLocalDays(
-                          selectedItem.stateIntervals[editingPauseIndex].endDate,
-                          -1
-                        )
-                      : selectedItem.stateIntervals[editingPauseIndex].endDate ?? ""
+                      ? addLocalDays(selectedItem.stateIntervals[editingPauseIndex].endDate, -1)
+                      : (selectedItem.stateIntervals[editingPauseIndex].endDate ?? "")
                   }
                   max={todayLocalDate()}
                   name="endDate"
@@ -5407,10 +5096,13 @@ export function TimelinePage({
             </p>
             {detailError && <div className={styles.detailError}>{detailError}</div>}
             <div className={styles.modalActions}>
-              <button onClick={() => {
-                setPendingMove(null);
-                setDetailError(null);
-              }} type="button">
+              <button
+                onClick={() => {
+                  setPendingMove(null);
+                  setDetailError(null);
+                }}
+                type="button"
+              >
                 取消
               </button>
               <button className={styles.primaryButton} onClick={confirmMove} type="button">
@@ -5559,11 +5251,9 @@ export function TimelinePage({
                           .sort((a, b) => a.order - b.order)
                           .map((location) => (
                             <option key={location.id} value={location.id}>
-                              {location.name}（该批次 {availableUnitsAtLocation(
-                                selectedAddLot!,
-                                location.id,
-                                transactions
-                              )} {selectedAddProduct?.baseUnit ?? ""}）
+                              {location.name}（该批次{" "}
+                              {availableUnitsAtLocation(selectedAddLot!, location.id, transactions)}{" "}
+                              {selectedAddProduct?.baseUnit ?? ""}）
                             </option>
                           ))}
                       </select>
@@ -5571,9 +5261,7 @@ export function TimelinePage({
                     <label>
                       启用日期
                       <LocalDateInput
-                        onChange={(event) =>
-                          changeAddStartDate(event.target.value as LocalDate)
-                        }
+                        onChange={(event) => changeAddStartDate(event.target.value as LocalDate)}
                         name="startDate"
                         required
                         value={addStartDate}
@@ -5587,68 +5275,52 @@ export function TimelinePage({
                           库存来源
                           <select
                             onChange={(event) =>
-                              setAddDailySource(
-                                event.target.value as "package" | "loose"
-                              )
+                              setAddDailySource(event.target.value as "package" | "loose")
                             }
                             value={addDailySource}
                           >
-                            <option
-                              disabled={selectedPackagedUnopenedPackages < 1}
-                              value="package"
-                            >
+                            <option disabled={selectedPackagedUnopenedPackages < 1} value="package">
                               完整盒（剩余 {selectedPackagedUnopenedPackages} 盒）
                             </option>
-                            <option
-                              disabled={selectedPackagedLooseUnits < 1}
-                              value="loose"
-                            >
+                            <option disabled={selectedPackagedLooseUnits < 1} value="loose">
                               散片（可用 {selectedPackagedLooseUnits} {addBaseUnit}）
                             </option>
                           </select>
                         </label>
-                        {addProfile?.managementTemplate === "soft_daily" ? <label>
-                          {addDailySource === "package"
-                            ? "本盒片数"
-                            : "本次分配散片数"}
-                          <input
-                            key={`${selectedAddLot?.id}-${addDailySource}`}
-                            defaultValue={
-                              addDailySource === "package"
-                                ? selectedAddLot && selectedAddProduct
-                                  ? lotUnitsPerPackage(
-                                      selectedAddLot,
-                                      selectedAddProduct
-                                    )
-                                  : 30
-                                : selectedPackagedLooseUnits
-                            }
-                            max={
-                              addDailySource === "loose"
-                                ? selectedPackagedLooseUnits
-                                : undefined
-                            }
-                            min="1"
-                            name="initialUnitQuantity"
-                            readOnly={addDailySource === "package"}
-                            required
-                            type="number"
-                          />
-                          <small>
-                            {addDailySource === "package"
-                              ? "开盒后该盒剩余片数只属于这一条时间轴记录"
-                              : "只分配入库时登记的散片，不会占用已开封盒的剩余片数"}
-                          </small>
-                        </label> : (
+                        {addProfile?.managementTemplate === "soft_daily" ? (
+                          <label>
+                            {addDailySource === "package" ? "本盒片数" : "本次分配散片数"}
+                            <input
+                              key={`${selectedAddLot?.id}-${addDailySource}`}
+                              defaultValue={
+                                addDailySource === "package"
+                                  ? selectedAddLot && selectedAddProduct
+                                    ? lotUnitsPerPackage(selectedAddLot, selectedAddProduct)
+                                    : 30
+                                  : selectedPackagedLooseUnits
+                              }
+                              max={
+                                addDailySource === "loose" ? selectedPackagedLooseUnits : undefined
+                              }
+                              min="1"
+                              name="initialUnitQuantity"
+                              readOnly={addDailySource === "package"}
+                              required
+                              type="number"
+                            />
+                            <small>
+                              {addDailySource === "package"
+                                ? "开盒后该盒剩余片数只属于这一条时间轴记录"
+                                : "只分配入库时登记的散片，不会占用已开封盒的剩余片数"}
+                            </small>
+                          </label>
+                        ) : (
                           <small>
                             {addDailySource === "package"
                               ? `开盒并启用 1 ${addBaseUnit}；其余 ${Math.max(
                                   0,
                                   (selectedAddLot && selectedAddProduct
-                                    ? lotUnitsPerPackage(
-                                        selectedAddLot,
-                                        selectedAddProduct
-                                      )
+                                    ? lotUnitsPerPackage(selectedAddLot, selectedAddProduct)
                                     : 1) - 1
                                 )} ${addBaseUnit}转为可用散片。`
                               : `从可用散片中启用 1 ${addBaseUnit}。`}
@@ -5686,7 +5358,7 @@ export function TimelinePage({
                           ? "开封后最晚使用日期"
                           : addProfile?.managementTemplate === "lens_case"
                             ? "预计切换／更换眼别日期"
-                          : "预计更换日期"}
+                            : "预计更换日期"}
                         <LocalDateInput
                           onChange={(event) =>
                             setAddExpectedEndDate(event.target.value as LocalDate)
@@ -5730,9 +5402,7 @@ export function TimelinePage({
         </div>
       )}
 
-      {showManageItems && (
-        <ManageItemsDialog onClose={() => setShowManageItems(false)} />
-      )}
+      {showManageItems && <ManageItemsDialog onClose={() => setShowManageItems(false)} />}
 
       {undoMove && (
         <div className={styles.toast}>

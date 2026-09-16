@@ -275,6 +275,8 @@ pub struct LensCareEvent {
 #[serde(rename_all = "camelCase")]
 pub struct AppDataMutation {
     #[serde(default)]
+    pub upsert_products: Vec<Product>,
+    #[serde(default)]
     pub upsert_items: Vec<TimelineItem>,
     #[serde(default)]
     pub delete_item_ids: Vec<String>,
@@ -1461,6 +1463,9 @@ fn commit_app_data_mutation(
     delete_rows_by_id(&transaction, "usage_facts", &mutation.delete_usage_fact_ids)?;
     delete_rows_by_id(&transaction, "usage_instances", &mutation.delete_item_ids)?;
 
+    for product in &mutation.upsert_products {
+        write_product(&transaction, product, None, false)?;
+    }
     for item in &mutation.upsert_items {
         write_timeline_item(&transaction, item)?;
     }
@@ -1532,9 +1537,11 @@ fn validate_inventory_ledger(transaction: &Transaction<'_>) -> Result<(), String
             "SELECT EXISTS(
                 SELECT 1
                   FROM inventory_transactions AS entry
-                  LEFT JOIN usage_instances AS instance
+                 LEFT JOIN usage_instances AS instance
                     ON instance.id=entry.related_instance_id
                  WHERE entry.related_instance_id IS NOT NULL
+                   AND entry.transaction_type!='reverse'
+                   AND COALESCE(entry.reversible_with_instance, 1)!=0
                    AND instance.id IS NULL
                    AND NOT EXISTS(
                      SELECT 1 FROM inventory_transactions AS reversal
@@ -3492,6 +3499,7 @@ mod tests {
             serde_json::from_value(valid_snapshot().items[0].clone()).unwrap();
         item.location_intervals = None;
         let mutation = AppDataMutation {
+            upsert_products: vec![],
             upsert_items: vec![item],
             delete_item_ids: vec![],
             append_transactions: vec![],
@@ -3708,6 +3716,7 @@ mod tests {
         };
         database
             .commit_mutation(&AppDataMutation {
+                upsert_products: vec![],
                 upsert_items: vec![],
                 delete_item_ids: vec![],
                 append_transactions: vec![correction],
@@ -3885,7 +3894,11 @@ mod tests {
             planned_date: None,
             completed_date: Some("2026-09-02".into()),
         };
+        let mut product: Product =
+            serde_json::from_value(valid_snapshot().products[0].clone()).unwrap();
+        product.default_duration_days = Some(60);
         let mutation = AppDataMutation {
+            upsert_products: vec![product],
             upsert_items: vec![item],
             delete_item_ids: vec![],
             append_transactions: vec![transaction],
@@ -3897,6 +3910,7 @@ mod tests {
         database.commit_mutation(&mutation).unwrap();
         let loaded = database.load().unwrap().unwrap();
         assert_eq!(loaded.items[0]["label"], json!("关系化实例"));
+        assert_eq!(loaded.products[0]["defaultDurationDays"], json!(60));
         assert_eq!(loaded.items[0]["eyeSides"], json!(["L"]));
         assert_eq!(loaded.usage_facts[0]["reason"], json!("测试消耗"));
         assert_eq!(
@@ -3906,5 +3920,117 @@ mod tests {
                 "completedDate": "2026-09-02"
             }))
         );
+    }
+
+    #[test]
+    fn deleting_an_instance_keeps_historical_and_irreversible_ledger_links() {
+        let database = Database::in_memory().unwrap();
+        database.save(&valid_snapshot()).unwrap();
+        database
+            .commit_mutation(&AppDataMutation {
+                upsert_products: vec![],
+                upsert_items: vec![],
+                delete_item_ids: vec![],
+                append_transactions: vec![
+                    InventoryTransaction {
+                        id: "reverse-old-activation".into(),
+                        stock_lot_id: "lot-1".into(),
+                        occurred_date: "2026-08-26".into(),
+                        transaction_type: "reverse".into(),
+                        quantity_delta: 1,
+                        related_instance_id: Some("item-1".into()),
+                        related_cycle_id: None,
+                        reversed_transaction_id: Some("activate-1".into()),
+                        allocated_unit_quantity: None,
+                        location_id: Some("home".into()),
+                        from_location_id: None,
+                        to_location_id: None,
+                        transfer_quantity: None,
+                        reversible_with_instance: None,
+                        reason: Some("修改启用日期".into()),
+                    },
+                    InventoryTransaction {
+                        id: "rescheduled-activation".into(),
+                        stock_lot_id: "lot-1".into(),
+                        occurred_date: "2026-08-26".into(),
+                        transaction_type: "activate".into(),
+                        quantity_delta: -1,
+                        related_instance_id: Some("item-1".into()),
+                        related_cycle_id: None,
+                        reversed_transaction_id: None,
+                        allocated_unit_quantity: None,
+                        location_id: Some("home".into()),
+                        from_location_id: None,
+                        to_location_id: None,
+                        transfer_quantity: None,
+                        reversible_with_instance: None,
+                        reason: None,
+                    },
+                    InventoryTransaction {
+                        id: "kept-open-marker".into(),
+                        stock_lot_id: "lot-1".into(),
+                        occurred_date: "2026-08-26".into(),
+                        transaction_type: "package_open".into(),
+                        quantity_delta: 0,
+                        related_instance_id: Some("item-1".into()),
+                        related_cycle_id: None,
+                        reversed_transaction_id: None,
+                        allocated_unit_quantity: Some(2),
+                        location_id: Some("home".into()),
+                        from_location_id: None,
+                        to_location_id: None,
+                        transfer_quantity: None,
+                        reversible_with_instance: Some(false),
+                        reason: None,
+                    },
+                ],
+                upsert_usage_facts: vec![],
+                delete_usage_fact_ids: vec![],
+                upsert_care_events: vec![],
+                delete_care_event_ids: vec![],
+            })
+            .unwrap();
+
+        database
+            .commit_mutation(&AppDataMutation {
+                upsert_products: vec![],
+                upsert_items: vec![],
+                delete_item_ids: vec!["item-1".into()],
+                append_transactions: vec![InventoryTransaction {
+                    id: "reverse-current-activation".into(),
+                    stock_lot_id: "lot-1".into(),
+                    occurred_date: "2026-08-27".into(),
+                    transaction_type: "reverse".into(),
+                    quantity_delta: 1,
+                    related_instance_id: None,
+                    related_cycle_id: None,
+                    reversed_transaction_id: Some("rescheduled-activation".into()),
+                    allocated_unit_quantity: None,
+                    location_id: Some("home".into()),
+                    from_location_id: None,
+                    to_location_id: None,
+                    transfer_quantity: None,
+                    reversible_with_instance: None,
+                    reason: Some("删除误录实例".into()),
+                }],
+                upsert_usage_facts: vec![],
+                delete_usage_fact_ids: vec![],
+                upsert_care_events: vec![],
+                delete_care_event_ids: vec!["care-1".into()],
+            })
+            .unwrap();
+
+        let loaded = database.load().unwrap().unwrap();
+        assert!(loaded.items.is_empty());
+        assert!(loaded.care_events.is_empty());
+        assert_eq!(loaded.transactions.len(), 6);
+        assert!(loaded
+            .transactions
+            .iter()
+            .any(|entry| entry["id"] == "reverse-old-activation"));
+        assert!(loaded
+            .transactions
+            .iter()
+            .any(|entry| entry["id"] == "kept-open-marker"));
     }
 }

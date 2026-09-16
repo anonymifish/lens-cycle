@@ -1,6 +1,19 @@
 import type { LocalDate } from "../../../shared/dates/localDate";
 import type { TimelineItem } from "../timeline.types";
 
+export function timelineLocationIdAtDate(
+  item: TimelineItem,
+  date: LocalDate
+): string | undefined {
+  return (
+    item.locationIntervals?.find(
+      (interval) =>
+        interval.startDate <= date &&
+        (interval.endDate === null || date < interval.endDate)
+    )?.locationId ?? item.locationId
+  );
+}
+
 export function editTimelineLocationInterval(
   item: TimelineItem,
   intervalIndex: number,

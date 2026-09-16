@@ -1,6 +1,6 @@
 import { invokePersistence as invoke } from "./persistenceGateway";
 import { usePersistenceStatusStore } from "../../stores/persistenceStatusStore";
-import type { InventoryTransaction } from "./inventory.types";
+import type { InventoryTransaction, Product } from "./inventory.types";
 import {
   applyAppDataSnapshot,
   assertValidAppDataSnapshot,
@@ -14,16 +14,14 @@ import { useTimelineItemStore } from "../../stores/timelineItemStore";
 import { useTimelineCareEventStore } from "../../stores/timelineCareEventStore";
 import { useUsageFactStore } from "../../stores/usageFactStore";
 import { useInventoryStore } from "../../stores/inventoryStore";
-import {
-  availableUnitsAtLocation,
-  effectiveInventoryTransactions
-} from "./inventory";
+import { availableUnitsAtLocation, effectiveInventoryTransactions } from "./inventory";
 import type { LocalDate } from "../../shared/dates/localDate";
 import type { TimelineItem } from "../timeline/timeline.types";
 import { useItemProfileStore } from "../../stores/itemProfileStore";
 import { endTimelineItem } from "../timeline/domain/lifecycle";
 
 interface AppDataMutation {
+  upsertProducts: Product[];
   upsertItems: AppDataSnapshot["items"];
   deleteItemIds: string[];
   appendTransactions: InventoryTransaction[];
@@ -75,31 +73,23 @@ export async function commitDataMutation<T>(operation: () => T): Promise<T> {
  * publishing a full application snapshot. The Rust command remains the atomic
  * persistence boundary; only the affected stores are updated after commit.
  */
-export async function deleteMistakenTimelineItem(
-  itemId: string,
-  occurredDate: LocalDate
-) {
+export async function deleteMistakenTimelineItem(itemId: string, occurredDate: LocalDate) {
   const inventory = useInventoryStore.getState();
   const items = useTimelineItemStore.getState().items;
-  const facts = useUsageFactStore.getState().facts.filter(
-    (fact) => fact.itemId === itemId
-  );
-  const careEvents = useTimelineCareEventStore.getState().events.filter(
-    (event) => event.itemId === itemId
-  );
+  const facts = useUsageFactStore.getState().facts.filter((fact) => fact.itemId === itemId);
+  const careEvents = useTimelineCareEventStore
+    .getState()
+    .events.filter((event) => event.itemId === itemId);
   if (!items.some((item) => item.id === itemId)) {
     throw new Error("使用实例不存在");
   }
 
   const effective = effectiveInventoryTransactions(inventory.transactions);
   const effectiveById = new Map(effective.map((entry) => [entry.id, entry]));
-  const activationTransactions = effective.filter(
-    (entry) =>
-      ["activate", "package_open", "loose_allocate"].includes(entry.type) &&
-      entry.reversibleWithInstance !== false &&
-      entry.relatedInstanceId === itemId
+  const relatedTransactions = effective.filter(
+    (entry) => entry.relatedInstanceId === itemId && entry.reversibleWithInstance !== false
   );
-  const usageTransactions = facts.map((fact) => {
+  facts.forEach((fact) => {
     const transaction = effectiveById.get(fact.transactionId);
     if (!transaction) {
       throw new Error("使用记录对应的库存流水不存在或已撤销");
@@ -111,13 +101,8 @@ export async function deleteMistakenTimelineItem(
     ) {
       throw new Error("使用记录与库存流水不一致");
     }
-    return transaction;
   });
-  const originals = [...activationTransactions, ...usageTransactions];
-  if (new Set(originals.map((entry) => entry.id)).size !== originals.length) {
-    throw new Error("待撤销的库存流水重复");
-  }
-  const reversals: InventoryTransaction[] = originals.map((original) => ({
+  const reversals: InventoryTransaction[] = relatedTransactions.map((original) => ({
     id: `tx-${crypto.randomUUID()}`,
     stockLotId: original.stockLotId,
     occurredDate,
@@ -133,6 +118,7 @@ export async function deleteMistakenTimelineItem(
         : "删除误录实例并撤销使用记录"
   }));
   const mutation: AppDataMutation = {
+    upsertProducts: [],
     upsertItems: [],
     deleteItemIds: [itemId],
     appendTransactions: reversals,
@@ -197,9 +183,7 @@ export async function commitTimelineItemInventoryUpdate(
     throw new Error("待更新的使用实例不存在");
   }
   const inventory = useInventoryStore.getState();
-  const existingTransactionIds = new Set(
-    inventory.transactions.map((entry) => entry.id)
-  );
+  const existingTransactionIds = new Set(inventory.transactions.map((entry) => entry.id));
   const appendedIds = appendTransactions.map((entry) => entry.id);
   if (
     new Set(appendedIds).size !== appendedIds.length ||
@@ -220,9 +204,7 @@ export async function commitTimelineItemInventoryUpdate(
   appendTransactions.forEach((entry, index) => {
     if (entry.type !== "transfer") return;
     const lot = inventory.lots.find((candidate) => candidate.id === entry.stockLotId);
-    const source = inventory.locations.find(
-      (candidate) => candidate.id === entry.fromLocationId
-    );
+    const source = inventory.locations.find((candidate) => candidate.id === entry.fromLocationId);
     const target = inventory.locations.find(
       (candidate) => candidate.id === entry.toLocationId && candidate.active
     );
@@ -247,6 +229,7 @@ export async function commitTimelineItemInventoryUpdate(
     }
   });
   const mutation: AppDataMutation = {
+    upsertProducts: [],
     upsertItems: [upsertItem],
     deleteItemIds: [],
     appendTransactions,
@@ -276,9 +259,7 @@ export async function completeBatchConsumableTimelineItem(
   if (!Number.isInteger(actualRemainingQuantity) || actualRemainingQuantity < 0) {
     throw new Error("实际剩余数量必须是非负整数");
   }
-  const item = useTimelineItemStore
-    .getState()
-    .items.find((entry) => entry.id === itemId);
+  const item = useTimelineItemStore.getState().items.find((entry) => entry.id === itemId);
   if (!item) throw new Error("使用实例不存在");
   const profile = useItemProfileStore
     .getState()
@@ -292,11 +273,7 @@ export async function completeBatchConsumableTimelineItem(
   const inventory = useInventoryStore.getState();
   const lot = inventory.lots.find((entry) => entry.id === item.sourceStockLotId);
   if (!lot) throw new Error("来源批次不存在");
-  const ledgerRemaining = availableUnitsAtLocation(
-    lot,
-    item.locationId,
-    inventory.transactions
-  );
+  const ledgerRemaining = availableUnitsAtLocation(lot, item.locationId, inventory.transactions);
   const difference = actualRemainingQuantity - ledgerRemaining;
   const reason = `结束盘点：账面 ${ledgerRemaining}，实际 ${actualRemainingQuantity}`;
   const adjustment: InventoryTransaction | null =
@@ -327,6 +304,7 @@ export async function completeBatchConsumableTimelineItem(
       : null;
   const completedItem = endTimelineItem(item, actualEndDate);
   const mutation: AppDataMutation = {
+    upsertProducts: [],
     upsertItems: [completedItem],
     deleteItemIds: [],
     appendTransactions: adjustment ? [adjustment] : [],
@@ -363,9 +341,9 @@ export async function reopenDiscardedTimelineItems(
   const facts = useUsageFactStore.getState().facts;
   const fact = facts.find((entry) => entry.id === factId);
   if (!fact) throw new Error("消耗记录不存在");
-  const original = effectiveInventoryTransactions(
-    useInventoryStore.getState().transactions
-  ).find((entry) => entry.id === fact.transactionId);
+  const original = effectiveInventoryTransactions(useInventoryStore.getState().transactions).find(
+    (entry) => entry.id === fact.transactionId
+  );
   if (
     !original ||
     original.relatedInstanceId !== fact.itemId ||
@@ -385,6 +363,7 @@ export async function reopenDiscardedTimelineItems(
     reason: "撤销丢弃并恢复使用"
   };
   const mutation: AppDataMutation = {
+    upsertProducts: [],
     upsertItems,
     deleteItemIds: [],
     appendTransactions: [reversal],
@@ -407,9 +386,7 @@ export async function reopenDiscardedTimelineItems(
 }
 
 async function commitTimelineItemUpserts(upsertItems: TimelineItem[]) {
-  const currentIds = new Set(
-    useTimelineItemStore.getState().items.map((item) => item.id)
-  );
+  const currentIds = new Set(useTimelineItemStore.getState().items.map((item) => item.id));
   if (
     upsertItems.length === 0 ||
     upsertItems.some((item) => !currentIds.has(item.id)) ||
@@ -418,6 +395,7 @@ async function commitTimelineItemUpserts(upsertItems: TimelineItem[]) {
     throw new Error("生命周期增量事务包含无效实例");
   }
   const mutation: AppDataMutation = {
+    upsertProducts: [],
     upsertItems,
     deleteItemIds: [],
     appendTransactions: [],
@@ -437,10 +415,7 @@ function publishTimelineItemUpserts(upsertItems: TimelineItem[]) {
   }));
 }
 
-function buildMutation(
-  before: AppDataSnapshot,
-  after: AppDataSnapshot
-): AppDataMutation {
+function buildMutation(before: AppDataSnapshot, after: AppDataSnapshot): AppDataMutation {
   const beforeTransactionIds = new Set(before.transactions.map((entry) => entry.id));
   const removedTransactionIds = removedIds(before.transactions, after.transactions);
   if (removedTransactionIds.length) {
@@ -456,11 +431,10 @@ function buildMutation(
   }
 
   return {
+    upsertProducts: [],
     upsertItems: changedById(before.items, after.items),
     deleteItemIds: removedIds(before.items, after.items),
-    appendTransactions: after.transactions.filter(
-      (entry) => !beforeTransactionIds.has(entry.id)
-    ),
+    appendTransactions: after.transactions.filter((entry) => !beforeTransactionIds.has(entry.id)),
     upsertUsageFacts: changedById(before.usageFacts, after.usageFacts),
     deleteUsageFactIds: removedIds(before.usageFacts, after.usageFacts),
     upsertCareEvents: changedById(before.careEvents, after.careEvents),
@@ -468,10 +442,7 @@ function buildMutation(
   };
 }
 
-function normalizeDeletedItemState(
-  before: AppDataSnapshot,
-  after: AppDataSnapshot
-) {
+function normalizeDeletedItemState(before: AppDataSnapshot, after: AppDataSnapshot) {
   const deletedItemIds = new Set(removedIds(before.items, after.items));
   if (!deletedItemIds.size) return;
   after.usageFacts = after.usageFacts.filter((fact) => !deletedItemIds.has(fact.itemId));
@@ -485,9 +456,7 @@ function changedById<T extends { id: string }>(before: T[], after: T[]): T[] {
 
 function removedIds<T extends { id: string }>(before: T[], after: T[]) {
   const afterIds = new Set(after.map((entry) => entry.id));
-  return before
-    .filter((entry) => !afterIds.has(entry.id))
-    .map((entry) => entry.id);
+  return before.filter((entry) => !afterIds.has(entry.id)).map((entry) => entry.id);
 }
 
 function hasMutation(mutation: AppDataMutation) {

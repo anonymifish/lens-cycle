@@ -10,7 +10,9 @@
 | 开发环境、本地构建和目录规范 | [development.md](./development.md) |
 | 测试分层、桌面闭环和门禁 | [testing.md](./testing.md) |
 | 当前可公开测试基线 | [test_report.md](./test_report.md) |
-| 0.1.2 发布与升级记录 | [release_0.1.2.md](./release_0.1.2.md) |
+| 0.1.4 时间轴与有效期发布记录 | [release_0.1.4.md](./release_0.1.4.md) |
+| 0.1.3 缺陷修复发布记录 | [release_0.1.3.md](./release_0.1.3.md) |
+| 0.1.2 退出清理与价格精度发布记录 | [release_0.1.2.md](./release_0.1.2.md) |
 | SQLite 可执行 schema | [`src-tauri/migrations`](../src-tauri/migrations) |
 
 需求、设计和测试信息已从旧需求稿、技术指南、手工清单、测试方案和历史执行提示词合并到

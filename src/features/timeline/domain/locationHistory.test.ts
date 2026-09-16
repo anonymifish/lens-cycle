@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { TimelineItem } from "../timeline.types";
-import { editTimelineLocationInterval } from "./locationHistory";
+import {
+  editTimelineLocationInterval,
+  timelineLocationIdAtDate
+} from "./locationHistory";
 
 const item: TimelineItem = {
   id: "item-1",
@@ -23,6 +26,11 @@ const item: TimelineItem = {
 };
 
 describe("timeline location history", () => {
+  it("resolves the location covering a historical date", () => {
+    expect(timelineLocationIdAtDate(item, "2026-08-04")).toBe("home");
+    expect(timelineLocationIdAtDate(item, "2026-08-05")).toBe("office");
+  });
+
   it("moves a boundary while keeping adjacent intervals continuous", () => {
     const updated = editTimelineLocationInterval(
       item,

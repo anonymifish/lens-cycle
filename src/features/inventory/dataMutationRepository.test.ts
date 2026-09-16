@@ -228,6 +228,95 @@ describe("combined SQLite mutations", () => {
     expect(collectAppDataSnapshot()).toEqual(before);
   });
 
+  it("deletes a rescheduled care-solution item and reverses every current stock effect", async () => {
+    const source = fixture();
+    source.profiles[0] = {
+      ...source.profiles[0]!,
+      groupId: "consumables",
+      managementTemplate: "opened_container",
+      standardType: "care_solution",
+      name: "护理液"
+    };
+    source.products[0] = {
+      ...source.products[0]!,
+      standardType: "care_solution",
+      brand: "测试护理液",
+      baseUnit: "瓶"
+    };
+    source.items[0] = {
+      ...source.items[0]!,
+      groupId: "consumables",
+      categoryName: "护理液",
+      label: "护理液实例"
+    };
+    source.transactions.push(
+      {
+        id: "reverse-old-activation",
+        stockLotId: "lot",
+        occurredDate: "2026-08-26",
+        type: "reverse",
+        quantityDelta: 1,
+        relatedInstanceId: "item",
+        reversedTransactionId: "activate",
+        locationId: "home"
+      },
+      {
+        id: "rescheduled-activation",
+        stockLotId: "lot",
+        occurredDate: "2026-08-26",
+        type: "activate",
+        quantityDelta: -1,
+        relatedInstanceId: "item",
+        locationId: "home"
+      },
+      {
+        id: "instance-correction",
+        stockLotId: "lot",
+        occurredDate: "2026-08-27",
+        type: "correction",
+        quantityDelta: 1,
+        relatedInstanceId: "item",
+        locationId: "home"
+      }
+    );
+    applyAppDataSnapshot(source);
+    const adapter = vi.fn();
+    setPersistenceCommandAdapterForTests(async <T>(
+      command: string,
+      args?: Record<string, unknown>
+    ) => {
+      adapter(command, args);
+      return undefined as T;
+    });
+
+    await deleteMistakenTimelineItem("item", "2026-08-28");
+
+    expect(adapter).toHaveBeenCalledWith("commit_app_data_mutation", {
+      mutation: expect.objectContaining({
+        deleteItemIds: ["item"],
+        appendTransactions: expect.arrayContaining([
+          expect.objectContaining({
+            reversedTransactionId: "rescheduled-activation",
+            quantityDelta: 1
+          }),
+          expect.objectContaining({
+            reversedTransactionId: "instance-correction",
+            quantityDelta: -1
+          })
+        ])
+      })
+    });
+    const appendedReversals = useInventoryStore
+      .getState()
+      .transactions.filter((entry) => entry.type === "reverse");
+    expect(appendedReversals).toHaveLength(3);
+    expect(
+      appendedReversals.filter(
+        (entry) => entry.reversedTransactionId === "activate"
+      )
+    ).toEqual([expect.objectContaining({ id: "reverse-old-activation" })]);
+  });
+
   it("publishes lifecycle changes incrementally only after SQLite acknowledges them", async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });

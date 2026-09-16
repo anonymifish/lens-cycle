@@ -99,6 +99,7 @@ export function LocalDateInput({
         min={min}
         onChange={updateValue}
         ref={pickerRef}
+        style={{ pointerEvents: "none" }}
         tabIndex={-1}
         type="date"
         value={displayedValue}

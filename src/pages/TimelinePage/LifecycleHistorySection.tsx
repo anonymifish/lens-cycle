@@ -12,11 +12,13 @@ export interface LifecycleHistoryEntry {
 interface LifecycleHistorySectionProps {
   entries: LifecycleHistoryEntry[];
   onEditPause: (pauseIndex: number) => void;
+  onDeletePause: (pauseIndex: number) => void;
 }
 
 export function LifecycleHistorySection({
   entries,
-  onEditPause
+  onEditPause,
+  onDeletePause
 }: LifecycleHistorySectionProps) {
   return (
     <section className={styles.usageHistory}>
@@ -40,12 +42,16 @@ export function LifecycleHistorySection({
               </span>
             </div>
             {entry.pauseIndex !== undefined && (
-              <button
-                onClick={() => onEditPause(entry.pauseIndex!)}
-                type="button"
-              >
-                编辑阶段
-              </button>
+              <div className={styles.usageFactActions}>
+                <button onClick={() => onEditPause(entry.pauseIndex!)} type="button">
+                  编辑阶段
+                </button>
+                {entry.detail === "历史暂停阶段" && (
+                  <button onClick={() => onDeletePause(entry.pauseIndex!)} type="button">
+                    删除阶段
+                  </button>
+                )}
+              </div>
             )}
           </article>
         ))}
